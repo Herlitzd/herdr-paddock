@@ -1,6 +1,6 @@
 // Modified from Herdr 0.1.11's shipped "spaces" mod (Apache-2.0, github.com/herdrdev/herdr-app):
-// spaces grouped by project (one git repo on one machine), as Orca does; the
-// header's layers button switches back to Herdr's own grouping. See projects.js.
+// spaces grouped by project (a folder on a machine, a git repo or not), as Orca does,
+// with their agents under them. See projects.js and agents.js.
 //
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
 // grouped by machine when more than one is known. After a space's name, the repo
@@ -86,8 +86,6 @@ export default class Spaces extends View {
     this.over = null;
     this.machines = [];
     this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
-    // "project": spaces under their repo, as Orca does; "machine": Herdr's own list.
-    this.mode = localStorage.getItem("group") === "machine" ? "machine" : "project";
     this.closed = new Set(JSON.parse(localStorage.getItem("projects.folded") ?? "[]"));
     // A space's agents show under it unless folded here; when each last changed state.
     this.shut = new Set(JSON.parse(localStorage.getItem("agents.folded") ?? "[]"));
@@ -308,7 +306,7 @@ export default class Spaces extends View {
         .child(svg(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(13).flex_none())
         .when(!collapsed, el => el.child(div().flex_1().truncate().child(m ?? "This computer"))
           .when(!connected, el => el.child(div().flex_none().child((machine?.state ?? "asleep").replace(/_/g, " "))))
-          .when(connected && this.mode === "project", el => el.child(div().id(`machine-project-${m ?? "local"}`).flex_none().px(3).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
+          .when(connected, el => el.child(div().id(`machine-project-${m ?? "local"}`).flex_none().px(3).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
             .tooltip("New project")
             .on_click((_e, cx) => { cx.stop_propagation(); openAdd(m); })
             .child(svg("mods/workspace-chrome/folder-plus.svg").size(12))))
@@ -320,7 +318,7 @@ export default class Spaces extends View {
         .text_size(12).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
         .on_click(() => run("space.new", m ? { machine: m } : {}))
         .child(svg("mods/workspace-chrome/plus.svg").size(12)).when(!collapsed, el => el.child("New space there"));
-      const kept = this.mode === "project" && projectList(store(), m).length > 0;
+      const kept = projectList(store(), m).length > 0;
       return [head, ...(folded ? [] : mine.length || kept ? this.section(mine, draw, t, collapsed, m) : [loading(m) ? loadingRow(m) : empty])];
     });
   }
@@ -329,7 +327,6 @@ export default class Spaces extends View {
   // then the spaces in none; or as Herdr lists them. On the narrow rail, a project
   // is its tile. A repo a space opens in joins the machine's projects by itself.
   section(rows, draw, t, collapsed, machine) {
-    if (this.mode !== "project") return rows.flatMap(draw);
     const ps = panes();
     const placed = rows.map((r) => ({ ...r, place: place(r.w, ps) }));
     let s = store();
@@ -491,7 +488,7 @@ export default class Spaces extends View {
         this.endDrag();
         if (from !== null && over === i && from !== i) {
           // Dropped on a space in another project (or in none): it joins that one too.
-          if (this.mode === "project" && (this.projectOf[from] ?? null) !== (this.projectOf[i] ?? null)) this.place(from, this.projectOf[i] ?? null);
+          if ((this.projectOf[from] ?? null) !== (this.projectOf[i] ?? null)) this.place(from, this.projectOf[i] ?? null);
           run("space.move", { id: spaces()[from].id, index: i + 1 });
         } else if (from === i) run("space.select", { id: w.id });
         cx.notify();
@@ -523,7 +520,7 @@ export default class Spaces extends View {
     if (!on && this.hoveredSpace !== w.id) return div();
     return div().id(`space-pin-${w.id}`).flex_none().p(2).rounded(4).text_color(on ? t.muted : t.dim).cursor_pointer()
       .hover((s) => s.bg(t.hover).text_color(t.foreground))
-      .tooltip(on ? "Unpin" : this.mode === "project" ? "Pin to the top of its project" : "Pin")
+      .tooltip(on ? "Unpin" : "Pin to the top of its project")
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => {
@@ -629,17 +626,7 @@ export default class Spaces extends View {
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
         .when(!collapsed, el => el.child("Spaces"))
         .child(h_flex().flex_none().items_center()
-          .when(!collapsed, el => el.child(div().id("space-group").size(26).flex_none().flex().items_center().justify_center().rounded(6)
-            .when(this.mode === "project", (b) => b.text_color(t.foreground))
-            .hover(s => s.bg(t.hover).text_color(t.foreground))
-            .tooltip(this.mode === "project" ? "Grouped by project: click to group by machine" : "Grouped by machine: click to group by project")
-            .on_click((_e, cx) => {
-              this.mode = this.mode === "project" ? "machine" : "project";
-              localStorage.setItem("group", this.mode);
-              cx.notify();
-            })
-            .child(svg("mods/workspace-chrome/layers.svg").size(14))))
-          .when(!collapsed && this.mode === "project", el => el.child(div().id("project-new").size(26).flex_none().flex().items_center().justify_center().rounded(6)
+          .when(!collapsed, el => el.child(div().id("project-new").size(26).flex_none().flex().items_center().justify_center().rounded(6)
             .hover(s => s.bg(t.hover).text_color(t.foreground))
             .tooltip("New project: a folder on this computer")
             .on_click(() => openAdd(null))
@@ -654,7 +641,7 @@ export default class Spaces extends View {
           cx.notify();
         })
         .children(this.grouped(t, collapsed))
-        .when(this.mode === "project" && !collapsed && this.pressed !== null && Boolean(this.projectOf[this.pressed]), (el) => el.child(
+        .when(!collapsed && this.pressed !== null && Boolean(this.projectOf[this.pressed]), (el) => el.child(
           div().id("project-out").mt(6).h(34).flex_none().flex().items_center().justify_center().rounded(8).border_1().border_dashed()
             .border_color(this.overProject === "out" ? t.accent : t.border).text_size(12).text_color(this.overProject === "out" ? t.foreground : t.dim)
             .on_mouse_move((_e, cx) => { if (this.overProject !== "out") { this.overProject = "out"; this.over = null; cx.notify(); } })
