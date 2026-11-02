@@ -506,9 +506,10 @@ export default class Spaces extends View {
           .when(Boolean(tree), el => el.pl(22))
           .child(this.agentChevron(w, t))
           .when(Boolean(tree), el => el.child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim)))
-          // A space's tile, as a project's: a terminal, or a branch for a worktree.
+          // A space's tile, as a project's: a window split in panes (Lucide's panels-top-left),
+          // or a branch for a worktree.
           .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(t.raised).items_center().justify_center()
-            .child(svg(`mods/workspace-chrome/${worktree ? "git-branch" : "terminal"}.svg`).size(12).text_color(t.muted))))
+            .child(svg(worktree ? "mods/workspace-chrome/git-branch.svg" : "mods/spaces-plus/icons/panels-top-left.svg").size(12).text_color(t.muted))))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
           .child(this.agentStatus(w, t))
