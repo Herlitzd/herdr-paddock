@@ -9,8 +9,8 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, agents, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, readTextFile } from "herdr";
-import { agentRow } from "./agents.js";
+import { spaces, machines, panes, agents, terminals, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, readTextFile } from "herdr";
+import { agentRow, subRow, tree } from "./agents.js";
 import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders, placedOf, placeSpace, reorderProject, naturalProject } from "./projects.js";
 import { Overlay, STORE, store, openMenu, openAdd, newSpaceIn } from "./overlay.js";
 
@@ -519,9 +519,11 @@ export default class Spaces extends View {
 
   // Each space's agents, and when each last changed state (kept, as the Agents list does).
   readAgents() {
-    const now = Date.now(), by = {};
+    const now = Date.now(), by = {}, list = agents();
     let dirty = false;
-    for (const a of agents()) {
+    this.terms = terminals();
+    this.listed = new Map(list.map((a) => [a.address, a.status]));
+    for (const a of list) {
       (by[a.space] ??= []).push(a);
       const s = a.status === "done" ? "idle" : a.status;
       if (this.changed[a.address]?.s !== s) { this.changed[a.address] = { s, at: now }; dirty = true; }
@@ -534,7 +536,11 @@ export default class Spaces extends View {
     const list = this.byspace[w.id] ?? [];
     if (!list.length || this.shut.has(w.id)) return [];
     const now = Date.now();
-    return list.map((a) => agentRow(a, t, { inset, since: this.changed[a.address]?.at ?? 0, now }));
+    // Each agent, then the sub-agents it started under it.
+    return list.flatMap((a) => [
+      agentRow(a, t, { inset, since: this.changed[a.address]?.at ?? 0, now }),
+      ...tree(this.terms ?? [], a.address).map((s) => subRow(s, t, { inset, listed: this.listed })),
+    ]);
   }
 
   // Before a space's tile, as on a project's row: a chevron folding its agents (an

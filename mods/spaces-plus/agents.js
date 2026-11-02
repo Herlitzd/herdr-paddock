@@ -58,5 +58,35 @@ export function agentRow(a, t, { inset = false, since = 0, now = Date.now() } = 
     .when(since > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - since))));
 }
 
-// The lights alone, for a space whose agents are folded.
-export const lights = (list, t) => h_flex().flex_none().gap(3).items_center().children(ordered(list).map((a) => light(a.status, t, 7)));
+// ---- sub-agents ----
+// Terminals an agent started (`hc run`) have no pane, so agents() leaves them out;
+// terminals() names their `parent`. As Herdr's Agents list does: an error counts as
+// needing you, and a sub-agent is never done (it reports to its parent).
+export function kidStatus(k, listed) {
+  const s = listed.get(k.address) ?? k.status;
+  return s === "error" ? "blocked" : s === "done" ? "idle" : s;
+}
+
+// The live sub-agents of `addr`, depth first, each with the tree lines before it.
+export function tree(all, addr, lead = []) {
+  const kids = all.filter((k) => k.parent === addr && k.state === "live");
+  return kids.flatMap((k, i) => {
+    const last = i === kids.length - 1;
+    return [{ k, lines: [...lead, last ? "└" : "├"] }, ...tree(all, k.address, [...lead, last ? "" : "│"])];
+  });
+}
+
+// A sub-agent's row under its parent's: tree lines, its light, what it runs. A click peeks at it.
+export function subRow({ k, lines }, t, { inset = false, listed }) {
+  const pic = icon(k.program, 12, t.muted);
+  return h_flex().id(`space-sub-${k.address}`).h(22).flex_none().pl(inset ? 51 : 33).pr(8).items_center().rounded(6)
+    .text_size(11.5).cursor_pointer().hover((st) => st.bg(t.hover))
+    .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+    .on_click((_e, cx) => { cx.stop_propagation(); run("terminal.peek", { terminal: k.address }); })
+    .children(lines.map((l) => div().self_start().mt(-4).w(9).h(15).mr(3).flex_none()
+      .when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input))
+      .when(l === "└" || l === "├", (el) => el.border_b(1.5).rounded_bl(5))))
+    .child(div().mr(6).child(light(kidStatus(k, listed), t, 7)))
+    .when(Boolean(pic), (el) => el.child(div().mr(6).child(pic)))
+    .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(k.name || k.template || k.program?.name || k.address));
+}
