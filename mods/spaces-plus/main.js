@@ -91,6 +91,8 @@ export default class Spaces extends View {
     this.closed = new Set(JSON.parse(localStorage.getItem("projects.folded") ?? "[]"));
     // A space's agents show under it unless folded here; when each last changed state.
     this.shut = new Set(JSON.parse(localStorage.getItem("agents.folded") ?? "[]"));
+    // Spaces pinned to the top of their project (of the loose spaces, out of one).
+    this.pins = new Set(JSON.parse(localStorage.getItem("pins") ?? "[]"));
     this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
     this.byspace = {};
     this.repoOf = {}; // JSON [machine, project folder] -> in a git repo (null: being asked)
@@ -339,12 +341,13 @@ export default class Spaces extends View {
     for (const p of projects) for (const r of p.rows) this.projectOf[r.i] = p.id;
     for (const r of loose) this.projectOf[r.i] = null;
     const inset = (r) => draw({ ...r, tree: null, inset: true });
+    const pinned = (list) => [...list.filter((r) => this.pins.has(r.w.id)), ...list.filter((r) => !this.pins.has(r.w.id))];
     return [
       ...projects.flatMap((p, n) => {
         const key = `${machine ?? ""}:${p.id}`;
-        return [this.projectHead({ ...p, machine, key, n }, t, collapsed), ...(this.closed.has(key) ? [] : p.rows.flatMap(collapsed ? draw : inset))];
+        return [this.projectHead({ ...p, machine, key, n }, t, collapsed), ...(this.closed.has(key) ? [] : pinned(p.rows).flatMap(collapsed ? draw : inset))];
       }),
-      ...loose.flatMap(draw),
+      ...pinned(loose).flatMap(draw),
     ];
   }
 
@@ -511,8 +514,27 @@ export default class Spaces extends View {
             .child(svg(`mods/workspace-chrome/${worktree ? "git-branch" : "terminal"}.svg`).size(12).text_color("#ffffff"))))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
-          .child(this.agentStatus(w, t)),
+          .child(this.agentStatus(w, t))
+          .child(this.pinButton(w, t)),
       );
+  }
+
+  // At a space row's right end: a pin, always when pinned, on hover otherwise.
+  pinButton(w, t) {
+    const on = this.pins.has(w.id);
+    if (!on && this.hoveredSpace !== w.id) return div();
+    return div().id(`space-pin-${w.id}`).flex_none().p(2).rounded(4).text_color(on ? t.muted : t.dim).cursor_pointer()
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(on ? "Unpin" : this.mode === "project" ? "Pin to the top of its project" : "Pin")
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        on ? this.pins.delete(w.id) : this.pins.add(w.id);
+        localStorage.setItem("pins", JSON.stringify([...this.pins]));
+        cx.notify();
+      })
+      .child(svg("mods/workspace-chrome/pin.svg").size(12));
   }
 
   // ---- agents under their space ----
