@@ -93,6 +93,8 @@ export default class Spaces extends View {
     this.shut = new Set(JSON.parse(localStorage.getItem("agents.folded") ?? "[]"));
     this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
     this.byspace = {};
+    this.repoOf = {}; // JSON [machine, project folder] -> in a git repo (null: being asked)
+    this.repoAsk = new Set();
     cx.timer.every(30000, (cx) => cx.notify());
     this.projectOf = {}; // space index -> its project's id, or null
     this.naturalOf = {}; // space index -> the project its folder or repo puts it in
@@ -113,6 +115,23 @@ export default class Spaces extends View {
     const due = this.due(now, sp, panes());
     if (due.size) this.refreshGit(due, cx);
     if (sp.some((s) => !this.shown.has(s.id))) cx.notify();
+    if (this.repoAsk.size) this.askRepos(cx);
+  }
+
+  // Projects' folders: in a git work tree or not ("true" from git), each once.
+  askRepos(cx) {
+    const keys = [...this.repoAsk];
+    this.repoAsk.clear();
+    cx.spawn(async (cx) => {
+      for (const key of keys) {
+        const [on, root] = JSON.parse(key);
+        const r = await exec("git", ["-C", root, "rev-parse", "--is-inside-work-tree"], { on }).catch(() => null);
+        // Asked again later when git couldn't be reached (a machine away).
+        if (!r) { delete this.repoOf[key]; continue; }
+        this.repoOf[key] = r.code === 0 && r.stdout.trim() === "true";
+      }
+      cx.notify();
+    });
   }
 
   // Places whose git could have changed: new ones (a new space, a cd), where a
@@ -330,8 +349,17 @@ export default class Spaces extends View {
   }
 
   // A project's tile: its color with a white mark, or plain; a branch for a repo, a folder otherwise.
+  // Whether a project's folder is in a git repo, asked of git there once per folder
+  // (see checkNew); until it answers, a project found from a repo, or holding a
+  // space in one, is taken for one.
+  isRepo(p) {
+    const key = JSON.stringify([p.machine ?? null, p.root]);
+    if (!(key in this.repoOf)) { this.repoOf[key] = null; this.repoAsk.add(key); }
+    return this.repoOf[key] ?? (p.auto || p.rows.some((r) => r.g));
+  }
+
   projectTile(p, t) {
-    const repo = p.auto || p.rows.some((r) => r.g);
+    const repo = this.isRepo(p);
     const fill = p.color ? (p.color.startsWith("#") ? p.color : MARK[p.color] ?? t[p.color]) : null;
     return h_flex().size(18).flex_none().rounded(5).items_center().justify_center().bg(fill ?? t.raised)
       .child(svg(`mods/workspace-chrome/${repo ? "git-branch" : "folder"}.svg`).size(12).text_color(fill ? "#ffffff" : t.muted));
@@ -479,8 +507,9 @@ export default class Spaces extends View {
           .when(Boolean(tree), el => el.pl(22))
           .child(this.agentChevron(w, t))
           .when(Boolean(tree), el => el.child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim)))
-          .when(!tree && Boolean(worktree), el => el.child(h_flex().size(18).flex_none().items_center().justify_center().child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim))))
-          .when(!tree && !worktree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
+          // A space's tile, as a project's: its color, a terminal, or a branch for a worktree.
+          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center()
+            .child(svg(`mods/workspace-chrome/${worktree ? "git-branch" : "terminal"}.svg`).size(12).text_color("#ffffff"))))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
           .child(this.agentStatus(w, t)),
