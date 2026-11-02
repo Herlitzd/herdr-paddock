@@ -9,8 +9,9 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
-import { projectsOf, projectKey, urgent } from "./projects.js";
+import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, pickFolder, readTextFile } from "herdr";
+import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders } from "./projects.js";
+import { Overlay, STORE, store, openMenu, openAdd, newSpaceIn } from "./overlay.js";
 
 // A short stable id for an element from any string (a project's key).
 const hash = (s) => [...String(s)].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 2166136261).toString(36);
@@ -53,8 +54,27 @@ export function tone(t, status) {
   return t[status] ?? t.unknown;
 }
 
+// A folder on this computer, from the system's picker, added as a project.
+async function pickProject() {
+  const root = await pickFolder({ prompt: "Choose the project's folder" });
+  if (root) setShared(STORE, addProject(store(), null, root));
+}
+
 export default class Spaces extends View {
   init(_props, cx) {
+    // The same mod draws its popups (a project's menu, its dialogs): see overlay.js.
+    if (props()?.role) { this.part = new Overlay(); this.part.init(cx); return; }
+    // Once: the folders of the space-folders mod, if it was used here, become projects.
+    if (!localStorage.getItem("imported")) {
+      localStorage.setItem("imported", "1");
+      cx.spawn(async (cx) => {
+        const text = await readTextFile(`${home()}/.config/herdr-space-folders.json`).catch(() => null);
+        let s = store();
+        for (const f of text ? fromSpaceFolders(text, home()) : []) s = addProject(s, null, f.root, { name: f.name });
+        if (s !== store()) setShared(STORE, s);
+        cx.notify();
+      });
+    }
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
@@ -245,7 +265,7 @@ export default class Spaces extends View {
         || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
     const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
-    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : this.section(rows, draw, t, collapsed);
+    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : this.section(rows, draw, t, collapsed, null);
     const machineNames = [null, ...remote];
     return machineNames.flatMap((m) => {
       const mine = rows.filter((r) => (r.w.machine ?? null) === m);
@@ -262,6 +282,10 @@ export default class Spaces extends View {
         .child(svg(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(13).flex_none())
         .when(!collapsed, el => el.child(div().flex_1().truncate().child(m ?? "This computer"))
           .when(!connected, el => el.child(div().flex_none().child((machine?.state ?? "asleep").replace(/_/g, " "))))
+          .when(connected && this.mode === "project", el => el.child(div().id(`machine-project-${m ?? "local"}`).flex_none().px(3).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
+            .tooltip("New project")
+            .on_click((_e, cx) => { cx.stop_propagation(); m ? openAdd(m) : pickProject(); })
+            .child(svg("mods/workspace-chrome/folder-plus.svg").size(12))))
           .when(connected, el => el.child(div().id(`machine-add-${m ?? "local"}`).flex_none().px(4).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
             .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", m ? { machine: m } : {}); }).child("+")))
           .child(div().size(6).rounded(3).flex_none().bg(connected ? t.ansi2 : t.dim))
@@ -270,27 +294,37 @@ export default class Spaces extends View {
         .text_size(12).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
         .on_click(() => run("space.new", m ? { machine: m } : {}))
         .child(svg("mods/workspace-chrome/plus.svg").size(12)).when(!collapsed, el => el.child("New space there"));
-      return [head, ...(folded ? [] : mine.length ? this.section(mine, draw, t, collapsed) : [loading(m) ? loadingRow(m) : empty])];
+      const kept = this.mode === "project" && projectList(store(), m).length > 0;
+      return [head, ...(folded ? [] : mine.length || kept ? this.section(mine, draw, t, collapsed, m) : [loading(m) ? loadingRow(m) : empty])];
     });
   }
 
-  // One machine's rows: by project (a header, then its spaces), then the spaces in no
-  // repo; or as Herdr lists them. The narrow rail keeps Herdr's plain list.
-  section(rows, draw, t, collapsed) {
-    for (const r of rows) this.projectOf[r.i] = projectKey(r.g);
+  // One machine's rows: its projects (a header, then their spaces; empty ones too),
+  // then the spaces in none; or as Herdr lists them. The narrow rail keeps Herdr's list.
+  // A repo a space opens in joins the machine's projects by itself.
+  section(rows, draw, t, collapsed, machine) {
     if (this.mode !== "project" || collapsed) return rows.map(draw);
-    const { projects, loose } = projectsOf(rows);
+    const ps = panes();
+    const placed = rows.map((r) => ({ ...r, place: place(r.w, ps) }));
+    let s = store();
+    for (const f of reposToAdd(s, machine, placed)) s = addProject(s, machine, f.root, { name: f.name, auto: true });
+    if (s !== store()) setShared(STORE, s);
+    const { projects, loose } = groupRows(projectList(s, machine), placed);
     const inset = (r) => draw({ ...r, tree: null, inset: true });
+    for (const p of projects) for (const r of p.rows) this.projectOf[r.i] = p.id;
+    for (const r of loose) this.projectOf[r.i] = null;
     return [
-      ...projects.flatMap((p) => [this.projectHead(p, t), ...(this.closed.has(p.key) ? [] : p.rows.map(inset))]),
+      ...projects.flatMap((p) => [this.projectHead({ ...p, machine, key: `${machine ?? ""}:${p.id}` }, t), ...(this.closed.has(`${machine ?? ""}:${p.id}`) ? [] : p.rows.map(inset))]),
       ...loose.map(draw),
     ];
   }
 
-  // A project's row: chevron, a git-folder tile, its name, how many spaces, and when
-  // folded the most urgent status inside; + (on hover) opens a space at its folder.
+  // A project's row: chevron, its tile (a branch for a repo, a folder otherwise), its
+  // name, how many spaces, and when folded the most urgent status inside. + (on hover)
+  // opens a space at its folder; right-click for its menu. With no space open it's dim.
   projectHead(p, t) {
-    const id = hash(p.key), closed = this.closed.has(p.key);
+    const id = hash(p.key), closed = this.closed.has(p.key), empty = p.rows.length === 0;
+    const repo = p.auto || p.rows.some((r) => r.g);
     const status = closed ? urgent(p.rows.map((r) => r.w.status)) : null;
     const tell = status === "blocked" || status === "done";
     return h_flex().id(`project-${id}`).h(28).flex_none().px(8).gap(7).items_center().rounded(7)
@@ -301,15 +335,17 @@ export default class Spaces extends View {
         cx.notify();
       })
       .on_hover((on, cx) => { this.hoveredProject = on ? p.key : this.hoveredProject === p.key ? null : this.hoveredProject; cx.notify(); })
+      .on_mouse_down("right", () => openMenu(p.machine, p.id))
       .child(svg(`mods/workspace-chrome/chevron-${closed ? "right" : "down"}.svg`).size(11).flex_none().text_color(t.dim))
       .child(h_flex().size(18).flex_none().rounded(5).items_center().justify_center().bg(t.raised)
-        .child(svg("mods/workspace-chrome/git-branch.svg").size(12).text_color(t.muted)))
-      .child(div().flex_1().min_w(0).truncate().font_medium().child(p.name))
+        .child(svg(`mods/workspace-chrome/${repo ? "git-branch" : "folder"}.svg`).size(12).text_color(t.muted)))
+      .child(div().flex_1().min_w(0).truncate().font_medium().text_color(empty ? t.muted : t.foreground).child(p.name))
       .when(closed && status === "working", (el) => el.child(svg("mods/workspace-chrome/spinner.svg").size(11).flex_none().text_color(t.working).spin(900)))
       .when(closed && tell, (el) => el.child(div().flex_none().text_color(tone(t, status)).child(glyph(status))))
       .when(this.hoveredProject === p.key, (el) => el.child(div().id(`project-add-${id}`).flex_none().px(4).rounded(4).text_color(t.dim)
         .hover((s) => s.bg(t.hover).text_color(t.foreground))
-        .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", { folder: p.root, ...(p.machine ? { machine: p.machine } : {}) }); })
+        .tooltip("New space here")
+        .on_click((_e, cx) => { cx.stop_propagation(); newSpaceIn(p, p.machine); })
         .child("+")))
       .child(div().flex_none().text_size(11.5).text_color(t.dim).child(String(p.rows.length)));
   }
@@ -408,7 +444,8 @@ export default class Spaces extends View {
       .child(div().text_color(tone(t, w.status)).child(glyph(w.status)));
   }
 
-  render() {
+  render(cx) {
+    if (this.part) return this.part.render(cx);
     const t = theme();
     const collapsed = narrow();
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
@@ -437,6 +474,11 @@ export default class Spaces extends View {
               cx.notify();
             })
             .child(svg("mods/workspace-chrome/layers.svg").size(14))))
+          .when(!collapsed && this.mode === "project", el => el.child(div().id("project-new").size(26).flex_none().flex().items_center().justify_center().rounded(6)
+            .hover(s => s.bg(t.hover).text_color(t.foreground))
+            .tooltip("New project: a folder on this computer")
+            .on_click(() => pickProject())
+            .child(svg("mods/workspace-chrome/folder-plus.svg").size(14))))
           .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
             .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14)))))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
