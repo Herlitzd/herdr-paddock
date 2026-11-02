@@ -29,10 +29,14 @@ export const baseName = (path) => String(path ?? "").replace(/[\\/]+$/, "").spli
 // A machine's key in the store: "" for this computer.
 export const machineKey = (machine) => machine ?? "";
 
-// The store: { [machineKey]: { list: [{ id, root, name, auto }], removed: [root] } }.
+// The store: { [machineKey]: { list: [{ id, root, name, auto, color }], removed: [root],
+// of: { [spaceId]: projectId | "" } } }. `of` is where a space was dragged: into a
+// project, or "" out of the one its folder would put it in.
 export const emptyStore = () => ({});
-const entry = (store, machine) => store?.[machineKey(machine)] ?? { list: [], removed: [] };
+const entry = (store, machine) => ({ list: [], removed: [], of: {}, ...(store?.[machineKey(machine)] ?? {}) });
+const put = (store, machine, e) => ({ ...store, [machineKey(machine)]: e });
 export const projectList = (store, machine) => entry(store, machine).list;
+export const placedOf = (store, machine) => entry(store, machine).of;
 
 const newId = (root) => "p" + [...norm(root)].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 2166136261).toString(36);
 
@@ -42,21 +46,52 @@ export function addProject(store, machine, root, { name, auto = false } = {}) {
   const e = entry(store, machine);
   if (e.list.some((p) => norm(p.root) === norm(root))) return store;
   if (auto && e.removed.some((r) => norm(r) === norm(root))) return store;
-  const list = [...e.list, { id: newId(root), root, name: name || baseName(root), auto }];
+  const list = [...e.list, { id: newId(root), root, name: name || baseName(root), auto, color: null }];
   const removed = auto ? e.removed : e.removed.filter((r) => norm(r) !== norm(root));
-  return { ...store, [machineKey(machine)]: { list, removed } };
+  return put(store, machine, { ...e, list, removed });
 }
 
-// Removed from the list; a repo's folder is remembered so it isn't added back by itself.
+// Removed from the list, with the spaces dragged into it; a repo's folder is
+// remembered so it isn't added back by itself.
 export function removeProject(store, machine, id) {
   const e = entry(store, machine), p = e.list.find((x) => x.id === id);
   if (!p) return store;
-  return { ...store, [machineKey(machine)]: { list: e.list.filter((x) => x.id !== id), removed: [...e.removed.filter((r) => norm(r) !== norm(p.root)), p.root] } };
+  const of = Object.fromEntries(Object.entries(e.of).filter(([, v]) => v !== id));
+  return put(store, machine, { list: e.list.filter((x) => x.id !== id), removed: [...e.removed.filter((r) => norm(r) !== norm(p.root)), p.root], of });
 }
 
-export function renameProject(store, machine, id, name) {
+const change = (store, machine, id, fn) => {
   const e = entry(store, machine);
-  return { ...store, [machineKey(machine)]: { ...e, list: e.list.map((p) => (p.id === id ? { ...p, name: name || baseName(p.root) } : p)) } };
+  return put(store, machine, { ...e, list: e.list.map((p) => (p.id === id ? fn(p) : p)) });
+};
+
+export const renameProject = (store, machine, id, name) => change(store, machine, id, (p) => ({ ...p, name: name || baseName(p.root) }));
+
+// A new name and folder; an empty name goes back to the folder's.
+export const editProject = (store, machine, id, { name, root }) =>
+  change(store, machine, id, (p) => ({ ...p, root: root || p.root, name: name || baseName(root || p.root) }));
+
+// One of the avatar colors ("ansi4"), a #rrggbb, or null for none.
+export const paintProject = (store, machine, id, color) => change(store, machine, id, (p) => ({ ...p, color: color ?? null }));
+
+// The project `id` moved to where `to` is (before it when moving up, after it down).
+export function reorderProject(store, machine, id, to) {
+  const e = entry(store, machine), list = [...e.list];
+  const i = list.findIndex((p) => p.id === id), j = list.findIndex((p) => p.id === to);
+  if (i < 0 || j < 0 || i === j) return store;
+  list.splice(j, 0, ...list.splice(i, 1));
+  return put(store, machine, { ...e, list });
+}
+
+// A space dragged into a project (`id`), or out of its project (null). Out of the
+// project its folder or repo would put it in, it stays out ("").
+export function placeSpace(store, machine, spaceId, id, { natural = null } = {}) {
+  const e = entry(store, machine), of = { ...e.of };
+  if (id && e.list.some((p) => p.id === id)) of[spaceId] = id === natural ? undefined : id;
+  else if (!id) of[spaceId] = natural ? "" : undefined;
+  else return store;
+  if (of[spaceId] === undefined) delete of[spaceId];
+  return put(store, machine, { ...e, of });
 }
 
 // Which project a space belongs to: its repo's, else the deepest folder holding it.
@@ -70,16 +105,23 @@ export function projectFor(list, { place, repo }) {
   return best;
 }
 
+// The project a row's folder or repo puts it in, before any drag.
+export function naturalProject(list, r) {
+  const repo = r.g?.repo ? repoRoot(JSON.parse(r.g.repo)[1]) : null;
+  return projectFor(list, { place: r.place, repo });
+}
+
 // rows: [{ w, i, g, place }] of one machine in Herdr's space order; g the space's
-// git info ({ name, repo: JSON [machine, commonDir], linked }) or null.
+// git info ({ name, repo: JSON [machine, commonDir], linked }) or null; `of` the
+// spaces dragged in or out (see placeSpace).
 // Returns { projects: [{ ...project, rows }], loose } in the list's order, empty
 // projects included; within a project its main checkouts come before worktrees
 // (`worktree: true`).
-export function groupRows(list, rows) {
+export function groupRows(list, rows, of = {}) {
   const by = new Map(list.map((p) => [p.id, { main: [], linked: [] }])), loose = [];
   for (const r of rows) {
-    const repo = r.g?.repo ? repoRoot(JSON.parse(r.g.repo)[1]) : null;
-    const p = projectFor(list, { place: r.place, repo });
+    const dragged = of[r.w.id];
+    const p = dragged === "" ? null : (dragged && list.find((x) => x.id === dragged)) || naturalProject(list, r);
     if (!p) { loose.push(r); continue; }
     by.get(p.id)[r.g?.linked ? "linked" : "main"].push({ ...r, worktree: Boolean(r.g?.linked) });
   }

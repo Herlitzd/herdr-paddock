@@ -1,18 +1,34 @@
 // The sidebar's own popups, opened as overlays of this mod (props.role):
-//   "project-menu"  a project's right-click menu: New space here, Rename, Remove
-//   "rename"        a project's name
+//   "project-menu"  a project's right-click menu: its color, New space here,
+//                   Edit project…, Remove project
+//   "edit"          a project's name and folder
 //   "add"           a folder to add as a project on another machine (here,
 //                   the system's folder picker does it)
 // Styled like Herdr's menu and prompt.
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { props, closeOverlay, openOverlay, run, theme, shared, setShared, exec } from "herdr";
-import { projectList, addProject, removeProject, renameProject } from "./projects.js";
+import { props, closeOverlay, openOverlay, run, theme, shared, setShared, exec, home, pickFolder } from "herdr";
+import { projectList, addProject, removeProject, editProject, paintProject } from "./projects.js";
 
 export const STORE = "spaces-plus.projects";
 export const store = () => shared(STORE) ?? {};
 export const project = (machine, id) => projectList(store(), machine).find((p) => p.id === id);
 export const newSpaceIn = (p, machine) => run("space.new", { folder: p.root, ...(machine ? { machine } : {}) });
+
+// The space avatars' colors (the same in every mod that draws them).
+export const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
+
+// A folder's real path on its machine, or null when there's none. git says which:
+// "cannot change to" a missing folder, anything else (a repo or not) exists.
+async function existing(path, machine) {
+  if (machine) {
+    const r = await exec("sh", ["-c", 'cd -- "$1" 2>/dev/null && pwd -P', "sh", path.replace(/^~(?=$|\/)/, "$HOME")], { on: machine }).catch(() => null);
+    return r?.code === 0 ? r.stdout.trim() : null;
+  }
+  const full = path.replace(/^~(?=$|[\\/])/, home());
+  const r = await exec("git", ["-C", full, "rev-parse", "--git-dir"]).catch(() => null);
+  return r && !/cannot change to/i.test(r.stderr) ? full : null;
+}
 
 export class Overlay {
   init(cx) {
@@ -21,24 +37,29 @@ export class Overlay {
     this.error = null;
     this.handle = cx.focus_handle();
     if (p.role === "project-menu") { this.handle.focus(); return; }
-    const value = p.role === "rename" ? project(p.machine, p.id)?.name ?? "" : "";
-    this.text = value;
-    this.input = InputState.new({ value });
-    if (value) this.input.set_selected_range({ start: 0, end: value.length });
-    this.input.on("change", (_e, cx) => { this.text = this.input.value(); this.error = null; cx.notify(); });
-    this.input.on("submit", (_e, cx) => this.submit(cx));
-    this.inputFocused = true;
-    this.input.on("focus", (_e, cx) => { this.inputFocused = true; cx.notify(); });
-    this.input.on("blur", (_e, cx) => { this.inputFocused = false; cx.notify(); });
-    this.input.focus();
-    cx.timer.after(600, () => this.input.focus());
+    const was = p.role === "edit" ? project(p.machine, p.id) : null;
+    const field = (value, placeholder) => {
+      const input = InputState.new({ value, placeholder });
+      input.on("change", (_e, cx) => { this.error = null; cx.notify(); });
+      input.on("submit", (_e, cx) => this.submit(cx));
+      input.on("focus", (_e, cx) => { this.focus = input; cx.notify(); });
+      return input;
+    };
+    this.name = p.role === "edit" ? field(was?.name ?? "", "") : null;
+    this.path = field(was?.root ?? "", p.machine ? "~/code/app" : "");
+    const first = this.name ?? this.path;
+    const value = first.value();
+    if (value) first.set_selected_range({ start: 0, end: value.length });
+    this.focus = first;
+    first.focus();
+    cx.timer.after(600, () => first.focus());
   }
 
   items() {
     const { machine, id } = props();
     return [
       { label: "New space here", icon: "plus", run: () => { const p = project(machine, id); if (p) newSpaceIn(p, machine); } },
-      { label: "Rename\u2026", icon: "square-pen", run: () => openRename(machine, id) },
+      { label: "Edit project…", icon: "square-pen", run: () => openEdit(machine, id) },
       { label: "Remove project", icon: "x", line: true, run: () => setShared(STORE, removeProject(store(), machine, id)) },
     ];
   }
@@ -50,75 +71,96 @@ export class Overlay {
     it.run();
   }
 
+  paint(color) {
+    const { machine, id, overlay } = props();
+    setShared(STORE, paintProject(store(), machine, id, color));
+    closeOverlay(overlay);
+  }
+
+  pick(cx) {
+    cx.spawn(async (cx) => {
+      const picked = await pickFolder({ prompt: "Choose the project's folder" });
+      if (picked) { this.path.set_value(picked); this.error = null; }
+      cx.notify();
+    });
+  }
+
   submit(cx) {
     const p = props();
-    const text = this.text.trim();
-    if (p.role === "rename") {
-      setShared(STORE, renameProject(store(), p.machine, p.id, text));
-      closeOverlay(p.overlay);
-      return;
-    }
-    // "add": a folder on that machine, checked there.
-    if (!text) { this.error = "Type the folder's path."; cx.notify(); return; }
     if (this.busy) return;
+    const path = this.path.value().trim(), name = this.name?.value().trim() ?? "";
+    if (!path) { this.error = "Type the folder's path."; cx.notify(); return; }
+    const was = p.role === "edit" ? project(p.machine, p.id) : null;
     this.busy = true;
+    cx.notify();
     cx.spawn(async (cx) => {
-      const r = await exec("sh", ["-c", 'cd -- "$1" 2>/dev/null && pwd -P', "sh", text.replace(/^~(?=$|\/)/, "$HOME")], { on: p.machine }).catch((e) => ({ code: 1, stderr: String(e) }));
+      // An unchanged folder isn't asked for again (its machine may be away).
+      const root = was && path === was.root ? was.root : await existing(path, p.machine);
       this.busy = false;
-      const root = r.code === 0 ? r.stdout.trim() : "";
-      if (!root) { this.error = `No folder at ${text} on ${p.machine}.`; cx.notify(); return; }
-      setShared(STORE, addProject(store(), p.machine, root));
+      if (!root) { this.error = `No folder at ${path}${p.machine ? ` on ${p.machine}` : ""}.`; cx.notify(); return; }
+      setShared(STORE, was ? editProject(store(), p.machine, p.id, { name, root }) : addProject(store(), p.machine, root));
       closeOverlay(p.overlay);
     });
   }
 
+  menuView(t, p) {
+    const list = this.items();
+    const current = project(p.machine, p.id)?.color ?? null;
+    const swatch = (color) => div().id(`pc-${color ?? "none"}`).size(20).flex_none().rounded(10).cursor_pointer()
+      .bg(color ? MARK[color] : t.raised).border_2().border_color(color === current ? t.foreground : t.popover)
+      .hover((s) => s.border_color(t.muted)).on_click(() => this.paint(color));
+    return v_flex().id("project-menu").track_focus(this.handle).w_full().min_h(0).p(5).bg(t.popover).text_size(12.8)
+      .on_key_down((e, cx) => {
+        if (e.key === "down") this.at = (this.at + 1) % list.length;
+        else if (e.key === "up") this.at = (this.at + list.length - 1) % list.length;
+        else if (e.key === "enter") this.choose(this.at);
+        else if (e.key === "escape") closeOverlay(p.overlay);
+        else return;
+        cx.notify();
+      })
+      .child(h_flex().px(8).pt(6).pb(8).gap(6).items_center().children([null, ...Object.keys(MARK)].map(swatch)))
+      .children(list.map((it, i) => v_flex()
+        .when(Boolean(it.line), (el) => el.child(div().mx(7).my(4).h(1).bg(t.border)))
+        .child(h_flex().id(`pm-${i}`).h(31).px(8).gap(9).rounded(7).items_center().text_color(t.foreground)
+          .when(i === this.at, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover))
+          .on_click(() => this.choose(i))
+          .child(svg(`mods/workspace-chrome/${it.icon}.svg`).size(14).flex_none().text_color(t.muted))
+          .child(div().flex_1().child(it.label)))));
+  }
+
   render() {
     const t = theme(), p = props();
-    if (p.role === "project-menu") {
-      const list = this.items();
-      return v_flex().id("project-menu").track_focus(this.handle).w_full().min_h(0).p(5).bg(t.popover).text_size(12.8)
-        .on_key_down((e, cx) => {
-          if (e.key === "down") this.at = (this.at + 1) % list.length;
-          else if (e.key === "up") this.at = (this.at + list.length - 1) % list.length;
-          else if (e.key === "enter") this.choose(this.at);
-          else if (e.key === "escape") closeOverlay(p.overlay);
-          else return;
-          cx.notify();
-        })
-        .children(list.map((it, i) => v_flex()
-          .when(Boolean(it.line), (el) => el.child(div().mx(7).my(4).h(1).bg(t.border)))
-          .child(h_flex().id(`pm-${i}`).h(31).px(8).gap(9).rounded(7).items_center().text_color(t.foreground)
-            .when(i === this.at, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover))
-            .on_click(() => this.choose(i))
-            .child(svg(`mods/workspace-chrome/${it.icon}.svg`).size(14).flex_none().text_color(t.muted))
-            .child(div().flex_1().child(it.label)))));
-    }
-    const rename = p.role === "rename";
-    const label = (text) => div().pt(16).pb(7).text_size(11.5).text_color(t.dim).child(text);
-    const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
+    if (p.role === "project-menu") return this.menuView(t, p);
+    const edit = p.role === "edit";
+    const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).flex_none().items_center().rounded(8)
       .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
       .hover((s) => s.opacity(0.88)).on_click(action).child(text);
+    const field = (label, input, hint, extra = null) => v_flex().gap(6)
+      .child(div().text_size(12).font_medium().text_color(t.muted).child(label))
+      .child(h_flex().gap(8)
+        .child(div().flex_1().min_w(0).h(34).px(10).flex().items_center().rounded(8).border_1()
+          .border_color(this.focus === input ? t.accent : t.input).bg(t.background)
+          .child(Input.new(input).w_full().text_size(13).text_color(t.foreground)))
+        .when(Boolean(extra), (el) => el.child(extra)))
+      .when(Boolean(hint), (el) => el.child(div().text_size(11.5).text_color(t.dim).child(hint)));
+    const choose = p.machine ? null : button("pd-choose", "Choose…", false, (_e, cx) => this.pick(cx));
     return v_flex().id("project-dialog").track_focus(this.handle)
       .on_key_down((e, cx) => { if (e.key === "escape") { closeOverlay(p.overlay); cx.stop_propagation(); } })
-      .w_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
+      .w_full().min_h(0).p(20).gap(16).bg(t.popover).text_color(t.foreground)
       .child(h_flex().items_center()
-        .child(div().flex_1().text_size(15).font_semibold().child(rename ? "Rename project" : `New project on ${p.machine}`))
+        .child(div().flex_1().text_size(15).font_semibold().child(edit ? "Edit project" : `New project on ${p.machine}`))
         .child(div().text_size(11).text_color(t.dim).child("Esc")))
-      .child(label(rename ? "Name" : "Folder"))
-      .child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(this.inputFocused ? t.accent : t.input).bg(t.background).text_size(12.8).text_color(t.foreground))
-      .child(div().pt(6).text_size(11.5).text_color(this.error ? t.blocked : t.dim)
-        .child(this.error ?? (rename ? "Empty goes back to the folder's name." : "A path on that machine, such as ~/code/app.")))
-      .child(h_flex().pt(20).gap(8).justify_end()
+      .when(edit, (el) => el.child(field("Name", this.name, "Empty goes back to the folder's name.")))
+      .child(field("Folder", this.path, p.machine ? `A path on ${p.machine}, such as ~/code/app.` : "Spaces working in it belong to the project; its + opens one there.", choose))
+      .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.blocked).child(this.error)))
+      .child(h_flex().pt(4).gap(8).justify_end()
         .child(button("pd-cancel", "Cancel", false, () => closeOverlay(p.overlay)))
-        .child(button("pd-save", rename ? "Save" : this.busy ? "Checking\u2026" : "Add", true, (_e, cx) => this.submit(cx))));
+        .child(button("pd-save", this.busy ? "Checking…" : edit ? "Save" : "Add", true, (_e, cx) => this.submit(cx))));
   }
 }
 
-export const openMenu = (machine, id) => openOverlayFor({ role: "project-menu", machine, id }, { kind: "popup", width: 200, height: 112 });
-export const openRename = (machine, id) => openOverlayFor({ role: "rename", machine, id }, { kind: "dialog", width: 420, height: 210 });
-export const openAdd = (machine) => openOverlayFor({ role: "add", machine }, { kind: "dialog", width: 440, height: 210 });
-
-function openOverlayFor(p, how) {
-  openOverlay({ mod: "spaces-plus", ...how, props: p });
-}
+const open = (p, how) => openOverlay({ mod: "spaces-plus", ...how, props: p });
+export const openMenu = (machine, id) => open({ role: "project-menu", machine, id }, { kind: "popup", width: 214, height: 150 });
+export const openEdit = (machine, id) => open({ role: "edit", machine, id }, { kind: "dialog", width: 460, height: 300 });
+export const openAdd = (machine) => open({ role: "add", machine }, { kind: "dialog", width: 460, height: 230 });

@@ -1,5 +1,5 @@
 // node tests/projects.test.mjs: the project list and grouping spaces into it.
-import { repoRoot, norm, inside, addProject, removeProject, renameProject, projectList, projectFor, groupRows, reposToAdd, urgent, fromSpaceFolders } from "../mods/spaces-plus/projects.js";
+import { repoRoot, norm, inside, addProject, removeProject, renameProject, editProject, paintProject, reorderProject, placeSpace, placedOf, projectList, projectFor, groupRows, reposToAdd, urgent, fromSpaceFolders } from "../mods/spaces-plus/projects.js";
 
 let bad = 0, count = 0;
 const check = (what, got, want) => {
@@ -63,6 +63,32 @@ const g = groupRows(projects, rows);
 check("grouped in list order, empty kept", g.projects.map((p) => [p.name, p.rows.map((r) => r.w.name)]), [["app", ["app", "fix-login"]], ["notes", ["notes"]], ["empty", []]]);
 check("worktree flag", g.projects[0].rows.map((r) => r.worktree), [false, true]);
 check("loose", g.loose.map((r) => r.w.name), ["scratch"]);
+
+// Dragged in and out
+check("dragged into notes", groupRows(projects, rows, { s0: "n" }).projects[1].rows.map((r) => r.w.name), ["scratch", "notes"]);
+check("dragged out of app", groupRows(projects, rows, { s2: "" }).loose.map((r) => r.w.name), ["scratch", "app"]);
+check("dragged to a project that's gone", groupRows(projects, rows, { s0: "zzz" }).loose.map((r) => r.w.name), ["scratch"]);
+
+let d = addProject(addProject({}, null, "/w/app"), null, "/w/notes");
+const [pa, pn] = projectList(d, null);
+d = placeSpace(d, null, "s0", pn.id);
+check("place into", placedOf(d, null), { s0: pn.id });
+check("place out of a dragged-in project forgets it", placedOf(placeSpace(d, null, "s0", null), null), {});
+check("place out of its natural project keeps it out", placedOf(placeSpace(d, null, "s2", null, { natural: pa.id }), null), { s0: pn.id, s2: "" });
+check("place back into its natural project forgets the drag", placedOf(placeSpace(placeSpace(d, null, "s2", null, { natural: pa.id }), null, "s2", pa.id, { natural: pa.id }), null), { s0: pn.id });
+check("place into a missing project does nothing", placeSpace(d, null, "s9", "zzz"), d);
+check("removing a project forgets spaces dragged into it", placedOf(removeProject(d, null, pn.id), null), {});
+
+// Edit, color, order
+check("edit name and folder", projectList(editProject(d, null, pa.id, { name: "Web", root: "/w/web" }), null)[0], { ...pa, root: "/w/web", name: "Web" });
+check("edit, empty name follows the new folder", projectList(editProject(d, null, pa.id, { name: "", root: "/w/web" }), null)[0].name, "web");
+check("paint", projectList(paintProject(d, null, pa.id, "ansi4"), null)[0].color, "ansi4");
+check("unpaint", projectList(paintProject(paintProject(d, null, pa.id, "ansi4"), null, pa.id, null), null)[0].color, null);
+let o = addProject(d, null, "/w/c");
+const pc = projectList(o, null)[2];
+check("move down", projectList(reorderProject(o, null, pa.id, pc.id), null).map((p) => p.name), ["notes", "c", "app"]);
+check("move up", projectList(reorderProject(o, null, pc.id, pa.id), null).map((p) => p.name), ["c", "app", "notes"]);
+check("move onto itself", reorderProject(o, null, pa.id, pa.id), o);
 
 check("repos to add", reposToAdd({}, null, rows), [{ root: "/w/app", name: "app" }]);
 check("repos already listed", reposToAdd(addProject({}, null, "/w/app"), null, rows), []);

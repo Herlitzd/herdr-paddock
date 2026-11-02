@@ -10,7 +10,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, pickFolder, readTextFile } from "herdr";
-import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders } from "./projects.js";
+import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders, placedOf, placeSpace, reorderProject, naturalProject } from "./projects.js";
 import { Overlay, STORE, store, openMenu, openAdd, newSpaceIn } from "./overlay.js";
 
 // A short stable id for an element from any string (a project's key).
@@ -94,7 +94,11 @@ export default class Spaces extends View {
     // "project": spaces under their repo, as Orca does; "machine": Herdr's own list.
     this.mode = localStorage.getItem("group") === "machine" ? "machine" : "project";
     this.closed = new Set(JSON.parse(localStorage.getItem("projects.folded") ?? "[]"));
-    this.projectOf = {}; // space index -> its project's key, for dragging within a project
+    this.projectOf = {}; // space index -> its project's id, or null
+    this.naturalOf = {}; // space index -> the project its folder or repo puts it in
+    this.overProject = null; // a project (or "out") a dragged space is over
+    this.moving = null; // a project being dragged: { key, id, machine, n }
+    this.overMove = null;
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // `git status` walks the whole tree, on another machine a process there:
@@ -300,54 +304,101 @@ export default class Spaces extends View {
   }
 
   // One machine's rows: its projects (a header, then their spaces; empty ones too),
-  // then the spaces in none; or as Herdr lists them. The narrow rail keeps Herdr's list.
-  // A repo a space opens in joins the machine's projects by itself.
+  // then the spaces in none; or as Herdr lists them. On the narrow rail, a project
+  // is its tile. A repo a space opens in joins the machine's projects by itself.
   section(rows, draw, t, collapsed, machine) {
-    if (this.mode !== "project" || collapsed) return rows.map(draw);
+    if (this.mode !== "project") return rows.map(draw);
     const ps = panes();
     const placed = rows.map((r) => ({ ...r, place: place(r.w, ps) }));
     let s = store();
     for (const f of reposToAdd(s, machine, placed)) s = addProject(s, machine, f.root, { name: f.name, auto: true });
     if (s !== store()) setShared(STORE, s);
-    const { projects, loose } = groupRows(projectList(s, machine), placed);
-    const inset = (r) => draw({ ...r, tree: null, inset: true });
+    const list = projectList(s, machine);
+    const { projects, loose } = groupRows(list, placed, placedOf(s, machine));
+    for (const r of placed) this.naturalOf[r.i] = naturalProject(list, r)?.id ?? null;
     for (const p of projects) for (const r of p.rows) this.projectOf[r.i] = p.id;
     for (const r of loose) this.projectOf[r.i] = null;
+    const inset = (r) => draw({ ...r, tree: null, inset: true });
     return [
-      ...projects.flatMap((p) => [this.projectHead({ ...p, machine, key: `${machine ?? ""}:${p.id}` }, t), ...(this.closed.has(`${machine ?? ""}:${p.id}`) ? [] : p.rows.map(inset))]),
+      ...projects.flatMap((p, n) => {
+        const key = `${machine ?? ""}:${p.id}`;
+        return [this.projectHead({ ...p, machine, key, n }, t, collapsed), ...(this.closed.has(key) ? [] : p.rows.map(collapsed ? draw : inset))];
+      }),
       ...loose.map(draw),
     ];
   }
 
-  // A project's row: chevron, its tile (a branch for a repo, a folder otherwise), its
-  // name, how many spaces, and when folded the most urgent status inside. + (on hover)
-  // opens a space at its folder; right-click for its menu. With no space open it's dim.
-  projectHead(p, t) {
-    const id = hash(p.key), closed = this.closed.has(p.key), empty = p.rows.length === 0;
+  // A project's tile: its color with a white mark, or plain; a branch for a repo, a folder otherwise.
+  projectTile(p, t) {
     const repo = p.auto || p.rows.some((r) => r.g);
+    const fill = p.color ? (p.color.startsWith("#") ? p.color : MARK[p.color] ?? t[p.color]) : null;
+    return h_flex().size(18).flex_none().rounded(5).items_center().justify_center().bg(fill ?? t.raised)
+      .child(svg(`mods/workspace-chrome/${repo ? "git-branch" : "folder"}.svg`).size(12).text_color(fill ? "#ffffff" : t.muted));
+  }
+
+  // A project's row, Orca's way round: chevron, tile, name, then what's inside when
+  // folded (a spinner, or a dot when something needs you), + on hover, the count.
+  // Click folds it, right-click for its menu, drag it to reorder, drop a space on it
+  // to put the space in it. With no space open it's dim.
+  projectHead(p, t, collapsed) {
+    const id = hash(p.key), closed = this.closed.has(p.key), empty = p.rows.length === 0;
     const status = closed ? urgent(p.rows.map((r) => r.w.status)) : null;
     const tell = status === "blocked" || status === "done";
-    return h_flex().id(`project-${id}`).h(28).flex_none().px(8).gap(7).items_center().rounded(7)
-      .text_color(t.foreground).cursor_pointer().hover((s) => s.bg(t.hover))
+    const target = this.pressed !== null && this.overProject === p.key;
+    const moving = this.moving, aimed = moving && moving.key !== p.key && this.overMove === p.key;
+    const head = h_flex().relative().id(`project-${id}`).h(28).flex_none().px(collapsed ? 2 : 8).gap(7).items_center().rounded(7)
+      .text_color(t.foreground).cursor_pointer()
+      .when(target, (el) => el.bg(t.selected).border_1().border_color(t.accent))
+      .when(!target, (el) => el.hover((s) => s.bg(t.hover)))
+      .when(Boolean(moving) && moving.key === p.key && this.overMove !== p.key, (el) => el.opacity(0.5))
+      .when(Boolean(aimed), (el) => el.child(div().absolute().left(0).right(0).h(2).bg(t.accent)
+        .when(moving.n < p.n, (line) => line.bottom(0)).when(moving.n > p.n, (line) => line.top(0))))
+      .on_mouse_down("left", () => { this.moving = { key: p.key, id: p.id, machine: p.machine, n: p.n }; this.overMove = p.key; })
+      .on_mouse_move((_e, cx) => {
+        const space = this.pressed !== null ? spaces()[this.pressed] : null;
+        const into = space && (space.machine ?? null) === (p.machine ?? null) ? p.key : null;
+        if (this.pressed !== null && this.overProject !== into) { this.overProject = into; this.over = null; cx.notify(); }
+        const over = this.moving && (this.moving.machine ?? null) === (p.machine ?? null) ? p.key : null;
+        if (this.moving && this.overMove !== over) { this.overMove = over; cx.notify(); }
+      })
+      .on_mouse_up("left", (_e, cx) => {
+        if (this.pressed !== null && this.overProject === p.key) this.place(this.pressed, p.id);
+        else if (this.moving && this.moving.key !== p.key && this.overMove === p.key) setShared(STORE, reorderProject(store(), p.machine, this.moving.id, p.id));
+        this.endDrag();
+        cx.notify();
+      })
       .on_click((_e, cx) => {
         closed ? this.closed.delete(p.key) : this.closed.add(p.key);
         localStorage.setItem("projects.folded", JSON.stringify([...this.closed]));
         cx.notify();
       })
       .on_hover((on, cx) => { this.hoveredProject = on ? p.key : this.hoveredProject === p.key ? null : this.hoveredProject; cx.notify(); })
-      .on_mouse_down("right", () => openMenu(p.machine, p.id))
+      .on_mouse_down("right", () => openMenu(p.machine, p.id));
+    if (collapsed) return head.justify_center().tooltip(p.name).child(this.projectTile(p, t));
+    return head
       .child(svg(`mods/workspace-chrome/chevron-${closed ? "right" : "down"}.svg`).size(11).flex_none().text_color(t.dim))
-      .child(h_flex().size(18).flex_none().rounded(5).items_center().justify_center().bg(t.raised)
-        .child(svg(`mods/workspace-chrome/${repo ? "git-branch" : "folder"}.svg`).size(12).text_color(t.muted)))
+      .child(this.projectTile(p, t))
       .child(div().flex_1().min_w(0).truncate().font_medium().text_color(empty ? t.muted : t.foreground).child(p.name))
       .when(closed && status === "working", (el) => el.child(svg("mods/workspace-chrome/spinner.svg").size(11).flex_none().text_color(t.working).spin(900)))
       .when(closed && tell, (el) => el.child(div().flex_none().text_color(tone(t, status)).child(glyph(status))))
       .when(this.hoveredProject === p.key, (el) => el.child(div().id(`project-add-${id}`).flex_none().px(4).rounded(4).text_color(t.dim)
         .hover((s) => s.bg(t.hover).text_color(t.foreground))
         .tooltip("New space here")
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click((_e, cx) => { cx.stop_propagation(); newSpaceIn(p, p.machine); })
         .child("+")))
       .child(div().flex_none().text_size(11.5).text_color(t.dim).child(String(p.rows.length)));
+  }
+
+  // A space dragged into a project (`id`), or out of its own (null).
+  place(index, id) {
+    const s = spaces()[index];
+    if (!s) return;
+    setShared(STORE, placeSpace(store(), s.machine ?? null, s.id, id, { natural: this.naturalOf[index] ?? null }));
+  }
+
+  endDrag() {
+    this.pressed = null; this.over = null; this.overProject = null; this.moving = null; this.overMove = null;
   }
 
   // Only what's unusual, after the name: "herdr \u00b7 spike \u21912 \u21931". The repo or
@@ -399,21 +450,22 @@ export default class Spaces extends View {
       })
       .on_mouse_move((_e, cx) => {
         const source = spaces()[this.pressed];
-        // Within its machine; by project, within its project too (git decides where a space belongs).
-        const same = this.mode !== "project" || this.projectOf[this.pressed] === this.projectOf[i];
-        const over = source && (source.machine ?? null) === (w.machine ?? null) && same ? i : null;
-        if (this.pressed !== null && this.over !== over) {
+        const over = source && (source.machine ?? null) === (w.machine ?? null) ? i : null;
+        if (this.pressed !== null && (this.over !== over || this.overProject !== null)) {
           this.over = over;
+          this.overProject = null;
           cx.notify();
         }
       })
       .on_mouse_up("left", (_e, cx) => {
         const from = this.pressed;
         const over = this.over;
-        this.pressed = null;
-        this.over = null;
-        if (from !== null && over === i && from !== i) run("space.move", { id: spaces()[from].id, index: i + 1 });
-        else if (from === i) run("space.select", { id: w.id });
+        this.endDrag();
+        if (from !== null && over === i && from !== i) {
+          // Dropped on a space in another project (or in none): it joins that one too.
+          if (this.mode === "project" && (this.projectOf[from] ?? null) !== (this.projectOf[i] ?? null)) this.place(from, this.projectOf[i] ?? null);
+          run("space.move", { id: spaces()[from].id, index: i + 1 });
+        } else if (from === i) run("space.select", { id: w.id });
         cx.notify();
       })
       .on_mouse_down("right", () => this.menu(w))
@@ -482,7 +534,17 @@ export default class Spaces extends View {
           .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
             .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14)))))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
-        .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
-        .children(this.grouped(t, collapsed)));
+        // Released on the drop zone: out of its project. Anywhere else: nothing.
+        .on_mouse_up("left", (_e, cx) => {
+          if (this.pressed !== null && this.overProject === "out") this.place(this.pressed, null);
+          this.endDrag();
+          cx.notify();
+        })
+        .children(this.grouped(t, collapsed))
+        .when(this.mode === "project" && !collapsed && this.pressed !== null && Boolean(this.projectOf[this.pressed]), (el) => el.child(
+          div().id("project-out").mt(6).h(34).flex_none().flex().items_center().justify_center().rounded(8).border_1().border_dashed()
+            .border_color(this.overProject === "out" ? t.accent : t.border).text_size(12).text_color(this.overProject === "out" ? t.foreground : t.dim)
+            .on_mouse_move((_e, cx) => { if (this.overProject !== "out") { this.overProject = "out"; this.over = null; cx.notify(); } })
+            .child("Drop here to take it out of its project"))));
   }
 }
