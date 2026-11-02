@@ -29,7 +29,7 @@ export const baseName = (path) => String(path ?? "").replace(/[\\/]+$/, "").spli
 // A machine's key in the store: "" for this computer.
 export const machineKey = (machine) => machine ?? "";
 
-// The store: { [machineKey]: { list: [{ id, root, name, auto, color }], removed: [root],
+// The store: { [machineKey]: { list: [{ id, root, name, auto }], removed: [root],
 // of: { [spaceId]: projectId | "" } } }. `of` is where a space was dragged: into a
 // project, or "" out of the one its folder would put it in.
 export const emptyStore = () => ({});
@@ -46,7 +46,7 @@ export function addProject(store, machine, root, { name, auto = false } = {}) {
   const e = entry(store, machine);
   if (e.list.some((p) => norm(p.root) === norm(root))) return store;
   if (auto && e.removed.some((r) => norm(r) === norm(root))) return store;
-  const list = [...e.list, { id: newId(root), root, name: name || baseName(root), auto, color: null }];
+  const list = [...e.list, { id: newId(root), root, name: name || baseName(root), auto }];
   const removed = auto ? e.removed : e.removed.filter((r) => norm(r) !== norm(root));
   return put(store, machine, { ...e, list, removed });
 }
@@ -70,9 +70,6 @@ export const renameProject = (store, machine, id, name) => change(store, machine
 // A new name and folder; an empty name goes back to the folder's.
 export const editProject = (store, machine, id, { name, root }) =>
   change(store, machine, id, (p) => ({ ...p, root: root || p.root, name: name || baseName(root || p.root) }));
-
-// One of the avatar colors ("ansi4"), a #rrggbb, or null for none.
-export const paintProject = (store, machine, id, color) => change(store, machine, id, (p) => ({ ...p, color: color ?? null }));
 
 // The project `id` moved to where `to` is (before it when moving up, after it down).
 export function reorderProject(store, machine, id, to) {

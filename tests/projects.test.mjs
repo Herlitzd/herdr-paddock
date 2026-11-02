@@ -1,5 +1,5 @@
 // node tests/projects.test.mjs: the project list and grouping spaces into it.
-import { repoRoot, norm, inside, addProject, removeProject, renameProject, editProject, paintProject, reorderProject, placeSpace, placedOf, projectList, projectFor, groupRows, reposToAdd, urgent, fromSpaceFolders } from "../mods/spaces-plus/projects.js";
+import { repoRoot, norm, inside, addProject, removeProject, renameProject, editProject, reorderProject, placeSpace, placedOf, projectList, projectFor, groupRows, reposToAdd, urgent, fromSpaceFolders } from "../mods/spaces-plus/projects.js";
 
 let bad = 0, count = 0;
 const check = (what, got, want) => {
@@ -79,11 +79,9 @@ check("place back into its natural project forgets the drag", placedOf(placeSpac
 check("place into a missing project does nothing", placeSpace(d, null, "s9", "zzz"), d);
 check("removing a project forgets spaces dragged into it", placedOf(removeProject(d, null, pn.id), null), {});
 
-// Edit, color, order
+// Edit, order
 check("edit name and folder", projectList(editProject(d, null, pa.id, { name: "Web", root: "/w/web" }), null)[0], { ...pa, root: "/w/web", name: "Web" });
 check("edit, empty name follows the new folder", projectList(editProject(d, null, pa.id, { name: "", root: "/w/web" }), null)[0].name, "web");
-check("paint", projectList(paintProject(d, null, pa.id, "ansi4"), null)[0].color, "ansi4");
-check("unpaint", projectList(paintProject(paintProject(d, null, pa.id, "ansi4"), null, pa.id, null), null)[0].color, null);
 let o = addProject(d, null, "/w/c");
 const pc = projectList(o, null)[2];
 check("move down", projectList(reorderProject(o, null, pa.id, pc.id), null).map((p) => p.name), ["notes", "c", "app"]);

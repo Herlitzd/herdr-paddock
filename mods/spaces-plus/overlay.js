@@ -1,6 +1,6 @@
 // The sidebar's own popups, opened as overlays of this mod (props.role):
-//   "project-menu"  a project's right-click menu: its color, New space here,
-//                   Edit project…, Remove project
+//   "project-menu"  a project's right-click menu: New space here, Edit project…,
+//                   Remove project
 //   "edit"          a project's name and folder
 //   "add"           a new project: its name and folder (Choose… opens the system's
 //                   folder picker on this computer; another machine's is typed)
@@ -8,15 +8,12 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { props, closeOverlay, openOverlay, run, theme, shared, setShared, exec, home, pickFolder } from "herdr";
-import { projectList, addProject, removeProject, editProject, paintProject } from "./projects.js";
+import { projectList, addProject, removeProject, editProject } from "./projects.js";
 
 export const STORE = "spaces-plus.projects";
 export const store = () => shared(STORE) ?? {};
 export const project = (machine, id) => projectList(store(), machine).find((p) => p.id === id);
 export const newSpaceIn = (p, machine) => run("space.new", { folder: p.root, ...(machine ? { machine } : {}) });
-
-// The space avatars' colors (the same in every mod that draws them).
-export const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
 
 // A folder's real path on its machine, or null when there's none. git says which:
 // "cannot change to" a missing folder, anything else (a repo or not) exists.
@@ -71,12 +68,6 @@ export class Overlay {
     it.run();
   }
 
-  paint(color) {
-    const { machine, id, overlay } = props();
-    setShared(STORE, paintProject(store(), machine, id, color));
-    closeOverlay(overlay);
-  }
-
   pick(cx) {
     cx.spawn(async (cx) => {
       const picked = await pickFolder({ prompt: "Choose the project's folder" });
@@ -105,10 +96,6 @@ export class Overlay {
 
   menuView(t, p) {
     const list = this.items();
-    const current = project(p.machine, p.id)?.color ?? null;
-    const swatch = (color) => div().id(`pc-${color ?? "none"}`).size(20).flex_none().rounded(10).cursor_pointer()
-      .bg(color ? MARK[color] : t.raised).border_2().border_color(color === current ? t.foreground : t.popover)
-      .hover((s) => s.border_color(t.muted)).on_click(() => this.paint(color));
     return v_flex().id("project-menu").track_focus(this.handle).w_full().min_h(0).p(5).bg(t.popover).text_size(12.8)
       .on_key_down((e, cx) => {
         if (e.key === "down") this.at = (this.at + 1) % list.length;
@@ -118,7 +105,6 @@ export class Overlay {
         else return;
         cx.notify();
       })
-      .child(h_flex().px(8).pt(6).pb(8).gap(6).items_center().children([null, ...Object.keys(MARK)].map(swatch)))
       .children(list.map((it, i) => v_flex()
         .when(Boolean(it.line), (el) => el.child(div().mx(7).my(4).h(1).bg(t.border)))
         .child(h_flex().id(`pm-${i}`).h(31).px(8).gap(9).rounded(7).items_center().text_color(t.foreground)
@@ -161,6 +147,6 @@ export class Overlay {
 }
 
 const open = (p, how) => openOverlay({ mod: "spaces-plus", ...how, props: p });
-export const openMenu = (machine, id) => open({ role: "project-menu", machine, id }, { kind: "popup", width: 214, height: 150 });
+export const openMenu = (machine, id) => open({ role: "project-menu", machine, id }, { kind: "popup", width: 200, height: 112 });
 export const openEdit = (machine, id) => open({ role: "edit", machine, id }, { kind: "dialog", width: 460, height: 300 });
 export const openAdd = (machine) => open({ role: "add", machine }, { kind: "dialog", width: 460, height: 300 });

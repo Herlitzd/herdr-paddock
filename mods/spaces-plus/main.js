@@ -360,9 +360,8 @@ export default class Spaces extends View {
 
   projectTile(p, t) {
     const repo = this.isRepo(p);
-    const fill = p.color ? (p.color.startsWith("#") ? p.color : MARK[p.color] ?? t[p.color]) : null;
-    return h_flex().size(18).flex_none().rounded(5).items_center().justify_center().bg(fill ?? t.raised)
-      .child(svg(`mods/workspace-chrome/${repo ? "git-branch" : "folder"}.svg`).size(12).text_color(fill ? "#ffffff" : t.muted));
+    return h_flex().size(18).flex_none().rounded(5).items_center().justify_center().bg(t.raised)
+      .child(svg(`mods/workspace-chrome/${repo ? "git-branch" : "folder"}.svg`).size(12).text_color(t.muted));
   }
 
   // A project's row, Orca's way round: chevron, tile, name, then what's inside when
