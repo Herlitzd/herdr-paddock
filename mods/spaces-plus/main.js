@@ -9,7 +9,8 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, readTextFile } from "herdr";
+import { spaces, machines, panes, agents, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, readTextFile } from "herdr";
+import { agentRow, lights } from "./agents.js";
 import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders, placedOf, placeSpace, reorderProject, naturalProject } from "./projects.js";
 import { Overlay, STORE, store, openMenu, openAdd, newSpaceIn } from "./overlay.js";
 
@@ -88,6 +89,11 @@ export default class Spaces extends View {
     // "project": spaces under their repo, as Orca does; "machine": Herdr's own list.
     this.mode = localStorage.getItem("group") === "machine" ? "machine" : "project";
     this.closed = new Set(JSON.parse(localStorage.getItem("projects.folded") ?? "[]"));
+    // A space's agents show under it unless folded here; when each last changed state.
+    this.shut = new Set(JSON.parse(localStorage.getItem("agents.folded") ?? "[]"));
+    this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
+    this.byspace = {};
+    cx.timer.every(30000, (cx) => cx.notify());
     this.projectOf = {}; // space index -> its project's id, or null
     this.naturalOf = {}; // space index -> the project its folder or repo puts it in
     this.overProject = null; // a project (or "out") a dragged space is over
@@ -255,7 +261,8 @@ export default class Spaces extends View {
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
     const rows = this.ordered();
-    const draw = (r) => (collapsed ? this.compact(r, t) : this.row(r, t));
+    // A space's row, then its agents' (as many elements as that takes).
+    const draw = (r) => (collapsed ? [this.compact(r, t)] : [this.row(r, t), ...this.agentRows(r, t)]);
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name)])].sort();
     const loading = m => {
       const layout = machines().find(k => k.name === m)?.layout;
@@ -301,7 +308,7 @@ export default class Spaces extends View {
   // then the spaces in none; or as Herdr lists them. On the narrow rail, a project
   // is its tile. A repo a space opens in joins the machine's projects by itself.
   section(rows, draw, t, collapsed, machine) {
-    if (this.mode !== "project") return rows.map(draw);
+    if (this.mode !== "project") return rows.flatMap(draw);
     const ps = panes();
     const placed = rows.map((r) => ({ ...r, place: place(r.w, ps) }));
     let s = store();
@@ -316,9 +323,9 @@ export default class Spaces extends View {
     return [
       ...projects.flatMap((p, n) => {
         const key = `${machine ?? ""}:${p.id}`;
-        return [this.projectHead({ ...p, machine, key, n }, t, collapsed), ...(this.closed.has(key) ? [] : p.rows.map(collapsed ? draw : inset))];
+        return [this.projectHead({ ...p, machine, key, n }, t, collapsed), ...(this.closed.has(key) ? [] : p.rows.flatMap(collapsed ? draw : inset))];
       }),
-      ...loose.map(draw),
+      ...loose.flatMap(draw),
     ];
   }
 
@@ -462,6 +469,7 @@ export default class Spaces extends View {
         } else if (from === i) run("space.select", { id: w.id });
         cx.notify();
       })
+      .on_hover((on, cx) => { this.hoveredSpace = on ? w.id : this.hoveredSpace === w.id ? null : this.hoveredSpace; cx.notify(); })
       .on_mouse_down("right", () => this.menu(w))
       .child(
         h_flex()
@@ -472,8 +480,54 @@ export default class Spaces extends View {
           .when(!tree && Boolean(worktree), el => el.child(h_flex().size(18).flex_none().items_center().justify_center().child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim))))
           .when(!tree && !worktree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
-          .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1()),
+          .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
+          .child(this.agentToggle(w, t)),
       );
+  }
+
+  // ---- agents under their space ----
+
+  // Each space's agents, and when each last changed state (kept, as the Agents list does).
+  readAgents() {
+    const now = Date.now(), by = {};
+    let dirty = false;
+    for (const a of agents()) {
+      (by[a.space] ??= []).push(a);
+      const s = a.status === "done" ? "idle" : a.status;
+      if (this.changed[a.address]?.s !== s) { this.changed[a.address] = { s, at: now }; dirty = true; }
+    }
+    if (dirty) localStorage.setItem("changed", JSON.stringify(this.changed));
+    this.byspace = by;
+  }
+
+  agentRows({ w, inset }, t) {
+    const list = this.byspace[w.id] ?? [];
+    if (!list.length || this.shut.has(w.id)) return [];
+    const now = Date.now();
+    return list.map((a) => agentRow(a, t, { inset, since: this.changed[a.address]?.at ?? 0, now }));
+  }
+
+  // At a space row's right end: folded, its agents' lights (a click unfolds them);
+  // open, a chevron on hover folds them.
+  agentToggle(w, t) {
+    const list = this.byspace[w.id] ?? [];
+    if (!list.length) return div();
+    const shut = this.shut.has(w.id);
+    const flip = (_e, cx) => {
+      cx.stop_propagation();
+      shut ? this.shut.delete(w.id) : this.shut.add(w.id);
+      localStorage.setItem("agents.folded", JSON.stringify([...this.shut]));
+      cx.notify();
+    };
+    const box = div().id(`space-agents-${w.id}`).flex_none().px(3).py(2).rounded(4).cursor_pointer()
+      .hover((s) => s.bg(t.hover))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+      .on_click(flip);
+    if (shut) return box.tooltip(`${list.length} agent${list.length > 1 ? "s" : ""}: click to show`).child(lights(list, t));
+    return this.hoveredSpace === w.id
+      ? box.tooltip("Hide its agents").child(svg("mods/workspace-chrome/chevron-down.svg").size(11).text_color(t.dim))
+      : div();
   }
 
   compact({ w, i }, t) {
@@ -492,6 +546,7 @@ export default class Spaces extends View {
 
   render(cx) {
     if (this.part) return this.part.render(cx);
+    this.readAgents();
     const t = theme();
     const collapsed = narrow();
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
