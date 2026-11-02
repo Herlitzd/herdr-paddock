@@ -59,8 +59,9 @@ export default class Spaces extends View {
   init(_props, cx) {
     // The same mod draws its popups (a project's menu, its dialogs): see overlay.js.
     if (props()?.role) { this.part = new Overlay(); this.part.init(cx); return; }
-    // Once: the folders of the space-folders mod, if it was used here, become projects.
-    if (!localStorage.getItem("imported")) {
+    // On first start (no projects kept yet): the folders of the space-folders mod, if it
+    // was used here, become projects.
+    if (!localStorage.getItem("imported") && !shared(STORE)) {
       localStorage.setItem("imported", "1");
       cx.spawn(async (cx) => {
         const text = await readTextFile(`${home()}/.config/herdr-space-folders.json`).catch(() => null);
@@ -506,7 +507,7 @@ export default class Spaces extends View {
           // A space's tile, as a project's: a window split in panes (Lucide's panels-top-left),
           // or a branch for a worktree.
           .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(t.raised).items_center().justify_center()
-            .child(svg(worktree ? "mods/workspace-chrome/git-branch.svg" : "mods/spaces-plus/icons/panels-top-left.svg").size(12).text_color(t.muted))))
+            .child(svg(worktree ? "mods/workspace-chrome/git-branch.svg" : "mods/paddock/icons/panels-top-left.svg").size(12).text_color(t.muted))))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
           .child(this.agentStatus(w, t))

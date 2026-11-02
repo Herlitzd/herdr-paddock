@@ -10,7 +10,7 @@ import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { props, closeOverlay, openOverlay, run, theme, shared, setShared, exec, home, pickFolder } from "herdr";
 import { projectList, addProject, removeProject, editProject } from "./projects.js";
 
-export const STORE = "spaces-plus.projects";
+export const STORE = "paddock.projects";
 export const store = () => shared(STORE) ?? {};
 export const project = (machine, id) => projectList(store(), machine).find((p) => p.id === id);
 export const newSpaceIn = (p, machine) => run("space.new", { folder: p.root, ...(machine ? { machine } : {}) });
@@ -146,7 +146,7 @@ export class Overlay {
   }
 }
 
-const open = (p, how) => openOverlay({ mod: "spaces-plus", ...how, props: p });
+const open = (p, how) => openOverlay({ mod: "paddock", ...how, props: p });
 export const openMenu = (machine, id) => open({ role: "project-menu", machine, id }, { kind: "popup", width: 200, height: 112 });
 export const openEdit = (machine, id) => open({ role: "edit", machine, id }, { kind: "dialog", width: 460, height: 300 });
 export const openAdd = (machine) => open({ role: "add", machine }, { kind: "dialog", width: 460, height: 300 });

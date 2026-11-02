@@ -1,5 +1,5 @@
 {
-  "name": "herdr-spaces-plus",
+  "name": "herdr-paddock",
   "private": true,
   "type": "module",
   "scripts": { "test": "node tests/projects.test.mjs" }

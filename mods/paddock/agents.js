@@ -1,15 +1,11 @@
 // A space's agents, under it in the sidebar as Orca shows them: a traffic light
 // (red: needs you, amber: working, green: done, a ring: idle), the program and the
 // session it's on, and how long it has been in that state. A click goes to it.
-// Folded, the space's row carries just the lights.
+// Folded, the space's row says only the most urgent state (see main.js).
 import { div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { run } from "herdr";
 import { session } from "./session.js";
-
-// Most urgent first, as Herdr ranks them; then as Herdr lists them.
-const RANK = { blocked: 0, done: 1, working: 2, idle: 3 };
-export const ordered = (list) => [...list].sort((a, b) => (RANK[a.status] ?? 4) - (RANK[b.status] ?? 4));
 
 export function duration(ms) {
   const m = Math.floor(ms / 60000);

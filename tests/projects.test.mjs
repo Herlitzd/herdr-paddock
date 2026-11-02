@@ -1,5 +1,5 @@
 // node tests/projects.test.mjs: the project list and grouping spaces into it.
-import { repoRoot, norm, inside, addProject, removeProject, renameProject, editProject, reorderProject, placeSpace, placedOf, projectList, projectFor, groupRows, reposToAdd, urgent, fromSpaceFolders } from "../mods/spaces-plus/projects.js";
+import { repoRoot, norm, inside, addProject, removeProject, renameProject, editProject, reorderProject, placeSpace, placedOf, projectList, projectFor, groupRows, reposToAdd, urgent, fromSpaceFolders } from "../mods/paddock/projects.js";
 
 let bad = 0, count = 0;
 const check = (what, got, want) => {
