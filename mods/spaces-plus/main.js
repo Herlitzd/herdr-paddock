@@ -10,7 +10,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, agents, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, readTextFile } from "herdr";
-import { agentRow, lights } from "./agents.js";
+import { agentRow } from "./agents.js";
 import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders, placedOf, placeSpace, reorderProject, naturalProject } from "./projects.js";
 import { Overlay, STORE, store, openMenu, openAdd, newSpaceIn } from "./overlay.js";
 
@@ -476,12 +476,14 @@ export default class Spaces extends View {
           .gap(9)
           .items_center()
           .when(Boolean(inset), el => el.pl(18))
-          .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim)))
+          .when(Boolean(tree), el => el.pl(22))
+          .child(this.agentChevron(w, t))
+          .when(Boolean(tree), el => el.child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim)))
           .when(!tree && Boolean(worktree), el => el.child(h_flex().size(18).flex_none().items_center().justify_center().child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim))))
           .when(!tree && !worktree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
-          .child(this.agentToggle(w, t)),
+          .child(this.agentStatus(w, t)),
       );
   }
 
@@ -507,27 +509,35 @@ export default class Spaces extends View {
     return list.map((a) => agentRow(a, t, { inset, since: this.changed[a.address]?.at ?? 0, now }));
   }
 
-  // At a space row's right end: folded, its agents' lights (a click unfolds them);
-  // open, a chevron on hover folds them.
-  agentToggle(w, t) {
+  // Before a space's tile, as on a project's row: a chevron folding its agents (an
+  // empty slot when it has none, so the rows line up).
+  agentChevron(w, t) {
     const list = this.byspace[w.id] ?? [];
-    if (!list.length) return div();
+    if (!list.length) return div().w(11).flex_none();
     const shut = this.shut.has(w.id);
-    const flip = (_e, cx) => {
-      cx.stop_propagation();
-      shut ? this.shut.delete(w.id) : this.shut.add(w.id);
-      localStorage.setItem("agents.folded", JSON.stringify([...this.shut]));
-      cx.notify();
-    };
-    const box = div().id(`space-agents-${w.id}`).flex_none().px(3).py(2).rounded(4).cursor_pointer()
+    return div().id(`space-agents-${w.id}`).flex_none().rounded(3).cursor_pointer()
       .hover((s) => s.bg(t.hover))
+      .tooltip(shut ? `Show its ${list.length > 1 ? `${list.length} agents` : "agent"}` : "Hide its agents")
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
-      .on_click(flip);
-    if (shut) return box.tooltip(`${list.length} agent${list.length > 1 ? "s" : ""}: click to show`).child(lights(list, t));
-    return this.hoveredSpace === w.id
-      ? box.tooltip("Hide its agents").child(svg("mods/workspace-chrome/chevron-down.svg").size(11).text_color(t.dim))
-      : div();
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        shut ? this.shut.delete(w.id) : this.shut.add(w.id);
+        localStorage.setItem("agents.folded", JSON.stringify([...this.shut]));
+        cx.notify();
+      })
+      .child(svg(`mods/workspace-chrome/chevron-${shut ? "right" : "down"}.svg`).size(11).text_color(t.dim));
+  }
+
+  // At a space row's right end while its agents are folded, as a folded project
+  // shows it: a spinner while one works, a dot when one needs you or is done.
+  agentStatus(w, t) {
+    const list = this.byspace[w.id] ?? [];
+    if (!list.length || !this.shut.has(w.id)) return div();
+    const status = urgent(list.map((a) => a.status));
+    if (status === "working") return svg("mods/workspace-chrome/spinner.svg").size(11).flex_none().text_color(t.working).spin(900);
+    if (status === "blocked" || status === "done") return div().flex_none().text_color(tone(t, status)).child(glyph(status));
+    return div();
   }
 
   compact({ w, i }, t) {

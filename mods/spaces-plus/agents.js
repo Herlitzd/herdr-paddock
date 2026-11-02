@@ -43,7 +43,7 @@ function icon(p, size, color) {
 export function agentRow(a, t, { inset = false, since = 0, now = Date.now() } = {}) {
   const { name, session: s } = label(a);
   const pic = icon(a.program, 13, t.muted);
-  return h_flex().id(`space-agent-${a.address}`).h(24).flex_none().pl(inset ? 54 : 36).pr(8).gap(7).items_center().rounded(6)
+  return h_flex().id(`space-agent-${a.address}`).h(24).flex_none().pl(inset ? 51 : 33).pr(8).gap(7).items_center().rounded(6)
     .text_size(12).cursor_pointer()
     .when(a.focused, (el) => el.bg(t.selected))
     .when(!a.focused, (el) => el.hover((st) => st.bg(t.hover)))
