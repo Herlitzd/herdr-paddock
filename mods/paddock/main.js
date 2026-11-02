@@ -2,16 +2,16 @@
 // spaces grouped by project (a folder on a machine, a git repo or not), as Orca does,
 // with their agents under them. See projects.js and agents.js.
 //
-// Workspace spaces: stable colored avatars, worktrees under their checkout,
-// grouped by machine when more than one is known. After a space's name, the repo
-// its first terminal is in now, only where unusual: branch, ahead/behind. Agent state lives in the agents list, not here. Click to
-// switch, right-click for its menu, drag to reorder.
+// From the shipped mod: worktrees found from git, spaces grouped by machine when
+// more than one is known, and after a space's name the repo its first terminal is
+// in now, only where unusual: branch, ahead/behind. Click to switch, right-click for
+// Herdr's space menu, drag to reorder.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, agents, terminals, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, readTextFile } from "herdr";
-import { agentRow, subRow, tree } from "./agents.js";
-import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders, placedOf, placeSpace, reorderProject, naturalProject } from "./projects.js";
+import { agentRow, subRow, tree, byParent } from "./agents.js";
+import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders, placedOf, placeSpace, reorderProject, naturalProject, prunePlaced } from "./projects.js";
 import { Overlay, STORE, store, openMenu, openAdd, newSpaceIn } from "./overlay.js";
 
 // A short stable id for an element from any string (a project's key).
@@ -65,9 +65,8 @@ export default class Spaces extends View {
       localStorage.setItem("imported", "1");
       cx.spawn(async (cx) => {
         const text = await readTextFile(`${home()}/.config/herdr-space-folders.json`).catch(() => null);
-        let s = store();
-        for (const f of text ? fromSpaceFolders(text, home()) : []) s = addProject(s, null, f.root, { name: f.name });
-        if (s !== store()) setShared(STORE, s);
+        const found = text ? fromSpaceFolders(text, home()) : [];
+        if (found.length) setShared(STORE, found.reduce((s, f) => addProject(s, null, f.root, { name: f.name }), store()));
         cx.notify();
       });
     }
@@ -94,9 +93,10 @@ export default class Spaces extends View {
     this.pins = new Set(JSON.parse(localStorage.getItem("pins") ?? "[]"));
     this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
     this.byspace = {};
-    this.repoOf = {}; // JSON [machine, project folder] -> in a git repo (null: being asked)
+    this.repoOf = {}; // JSON [machine, project folder] -> { v: in a git repo (null: unknown), at, busy }
     this.repoAsk = new Set();
-    cx.timer.every(30000, (cx) => cx.notify());
+    // The agents' times, while any is shown.
+    cx.timer.every(30000, (cx) => { if (Object.keys(this.byspace).length) cx.notify(); });
     this.projectOf = {}; // space index -> its project's id, or null
     this.naturalOf = {}; // space index -> the project its folder or repo puts it in
     this.overProject = null; // a project (or "out") a dragged space is over
@@ -119,20 +119,21 @@ export default class Spaces extends View {
     if (this.repoAsk.size) this.askRepos(cx);
   }
 
-  // Projects' folders: in a git work tree or not ("true" from git), each once.
+  // Projects' folders: in a git work tree or not ("true" from git). Each folder on
+  // its own, so a slow machine doesn't hold up the rest.
   askRepos(cx) {
     const keys = [...this.repoAsk];
     this.repoAsk.clear();
-    cx.spawn(async (cx) => {
-      for (const key of keys) {
-        const [on, root] = JSON.parse(key);
+    for (const key of keys) {
+      const [on, root] = JSON.parse(key);
+      cx.spawn(async (cx) => {
         const r = await exec("git", ["-C", root, "rev-parse", "--is-inside-work-tree"], { on }).catch(() => null);
-        // Asked again later when git couldn't be reached (a machine away).
-        if (!r) { delete this.repoOf[key]; continue; }
-        this.repoOf[key] = r.code === 0 && r.stdout.trim() === "true";
-      }
-      cx.notify();
-    });
+        const was = this.repoOf[key]?.v ?? null;
+        // Unreachable (a machine away): keep what it knew; asked again in a minute.
+        this.repoOf[key] = { v: r ? r.code === 0 && r.stdout.trim() === "true" : was, at: Date.now(), failed: !r, busy: false };
+        if (!r || this.repoOf[key].v !== was) cx.notify();
+      });
+    }
   }
 
   // Places whose git could have changed: new ones (a new space, a cd), where a
@@ -331,8 +332,12 @@ export default class Spaces extends View {
     const ps = panes();
     const placed = rows.map((r) => ({ ...r, place: place(r.w, ps) }));
     let s = store();
-    for (const f of reposToAdd(s, machine, placed)) s = addProject(s, machine, f.root, { name: f.name, auto: true });
-    if (s !== store()) setShared(STORE, s);
+    // Written only when a repo was found, never on a plain render.
+    const repos = reposToAdd(s, machine, placed);
+    if (repos.length) {
+      for (const f of repos) s = addProject(s, machine, f.root, { name: f.name, auto: true });
+      setShared(STORE, s);
+    }
     const list = projectList(s, machine);
     const { projects, loose } = groupRows(list, placed, placedOf(s, machine));
     for (const r of placed) this.naturalOf[r.i] = naturalProject(list, r)?.id ?? null;
@@ -345,7 +350,7 @@ export default class Spaces extends View {
         const key = `${machine ?? ""}:${p.id}`;
         return [this.projectHead({ ...p, machine, key, n }, t, collapsed), ...(this.closed.has(key) ? [] : pinned(p.rows).flatMap(collapsed ? draw : inset))];
       }),
-      ...pinned(loose).flatMap(draw),
+      ...pinned(loose).flatMap((r) => draw({ ...r, tree: null, worktree: Boolean(r.g?.linked) })),
     ];
   }
 
@@ -354,9 +359,11 @@ export default class Spaces extends View {
   // (see checkNew); until it answers, a project found from a repo, or holding a
   // space in one, is taken for one.
   isRepo(p) {
-    const key = JSON.stringify([p.machine ?? null, p.root]);
-    if (!(key in this.repoOf)) { this.repoOf[key] = null; this.repoAsk.add(key); }
-    return this.repoOf[key] ?? (p.auto || p.rows.some((r) => r.g));
+    const key = JSON.stringify([p.machine ?? null, p.root]), k = this.repoOf[key];
+    // Asked once, again after 10 minutes (a git init), or a minute after it couldn't be.
+    const age = k ? Date.now() - k.at : Infinity;
+    if (!k?.busy && (!k || age > (k.failed ? 60000 : 600000))) { this.repoOf[key] = { ...(k ?? { v: null, at: 0 }), busy: true }; this.repoAsk.add(key); }
+    return this.repoOf[key].v ?? (p.auto || p.rows.some((r) => r.g));
   }
 
   projectTile(p, t) {
@@ -471,6 +478,8 @@ export default class Spaces extends View {
           .when(this.pressed > i, line => line.top(0)),
       ))
       .on_mouse_down("left", () => {
+        this.moving = null;
+        this.overMove = null;
         this.pressed = i;
         this.over = i;
       })
@@ -539,15 +548,38 @@ export default class Spaces extends View {
   readAgents() {
     const now = Date.now(), by = {}, list = agents();
     let dirty = false;
-    this.terms = terminals();
+    // Live terminals by parent, for sub-agents.
+    this.kids = byParent(terminals());
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     for (const a of list) {
       (by[a.space] ??= []).push(a);
       const s = a.status === "done" ? "idle" : a.status;
       if (this.changed[a.address]?.s !== s) { this.changed[a.address] = { s, at: now }; dirty = true; }
     }
+    // As the Agents list does: forget agents gone for 30 days.
+    for (const [k, c] of Object.entries(this.changed)) if (!this.listed.has(k) && now - c.at > 30 * 86400000) { delete this.changed[k]; dirty = true; }
     if (dirty) localStorage.setItem("changed", JSON.stringify(this.changed));
     this.byspace = by;
+    this.prune();
+  }
+
+  // Pins, folds and drags of spaces that are gone, as the Agents list prunes its pins:
+  // only for a machine some of whose spaces are listed (so not while one is loading or
+  // away), so a space id never inherits another's.
+  prune() {
+    const sp = spaces(), ids = new Set(sp.map((s) => s.id));
+    const heard = new Set(sp.map((s) => s.machine ?? null));
+    const machineOf = (id) => (id.includes("/") ? id.split("/")[0] : null);
+    const gone = (id) => heard.has(machineOf(id)) && !ids.has(id);
+    for (const [set, name] of [[this.pins, "pins"], [this.shut, "agents.folded"]]) {
+      const old = [...set].filter(gone);
+      if (old.length) { old.forEach((id) => set.delete(id)); localStorage.setItem(name, JSON.stringify([...set])); }
+    }
+    // prunePlaced hands back the same store when nothing goes: written only on a change.
+    const before = store();
+    let s = before;
+    for (const m of heard) s = prunePlaced(s, m, ids);
+    if (s !== before) setShared(STORE, s);
   }
 
   agentRows({ w, inset }, t) {
@@ -557,7 +589,7 @@ export default class Spaces extends View {
     // Each agent, then the sub-agents it started under it.
     return list.flatMap((a) => [
       agentRow(a, t, { inset, since: this.changed[a.address]?.at ?? 0, now }),
-      ...tree(this.terms ?? [], a.address).map((s) => subRow(s, t, { inset, listed: this.listed })),
+      ...tree(this.kids ?? new Map(), a.address).map((s) => subRow(s, t, { inset, listed: this.listed })),
     ]);
   }
 

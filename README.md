@@ -24,10 +24,11 @@ A mod for the [Herdr](https://herdr.dev) desktop app. It replaces the shipped
   in its folder, right-click for **New space here**, **Edit project…** (name and
   folder) and **Remove project** (the folder and its spaces stay). Folded, it shows
   a spinner when an agent inside works and a dot when one needs you or is done.
-- **Agents under their space:** a light (red: needs you, green: done, amber pulsing:
-  working, a ring: idle), the program, its session (Pi, Claude Code, Codex,
-  OpenCode; see [herdr-session-titles](https://github.com/choam2426/herdr-session-titles))
-  and the time in that state. A click goes to the agent. Sub-agents (started with
+- **Agents under their space:** a light in the theme's status colors (needs you,
+  done, working pulsing, a ring when idle), the program, its session (read from its
+  terminal title as [herdr-session-titles](https://github.com/choam2426/herdr-session-titles)
+  does: Pi, Claude Code and Codex tested; OpenCode from its source) and the time in
+  that state. A click goes to the agent. Sub-agents (started with
   `hc run`) hang under their parent with tree lines; a click peeks at one. The
   chevron before a space folds its agents.
 - **Pin** (the pin on a space's row, on hover) keeps a space at the top of its project.
@@ -46,7 +47,9 @@ at it.
 By hand:
 
 1. Copy the mod (use `$HERDR_APP_HOME` instead of `~/.config/herdr-app` if you set
-   it; rename the folder if you already have a `paddock`):
+   it). If you already have a mod named `paddock`, give this one another folder name
+   and change the name in two places too: `mod: "paddock"` in `overlay.js` (its menus
+   and dialogs) and `mods/paddock/icons/` in `main.js` (the space icon).
 
    ```sh
    git clone https://github.com/choam2426/herdr-paddock
@@ -67,22 +70,30 @@ By hand:
 
 To go back: `herdr-app do layout.switch '{"name":"main"}'`.
 
-## What it runs and keeps
+## What it runs, reads and keeps
 
-- `git` in your spaces' folders, as Herdr's own sidebar does (branch, ahead/behind,
-  which repository), and `git rev-parse` once per project folder to tell a
-  repository from a plain folder. On another machine it asks there.
-- Adding a project on another machine checks the folder there with `sh`.
+- As Herdr's own sidebar does: `git` in your spaces' folders (branch, ahead/behind,
+  which repository) and `hc machine ls` every 15 seconds.
+- `git rev-parse` in each project's folder, once and again every 10 minutes, to tell
+  a repository from a plain folder. For a project on another machine, there.
+- Adding or editing a project checks the folder: here by starting `git` in it, on
+  another machine with `sh` there (which also expands `~`).
+- On first start only, it reads `~/.config/herdr-space-folders.json` (the
+  space-folders mod's file) if it exists, to turn its folders into projects.
 - No network. Projects are kept in Herdr's shared state (`paddock.projects`), per
-  machine; folds and pins in the mod's own storage.
+  machine. Folds, pins and when each agent last changed state are kept in the mod's
+  own storage; entries for spaces and agents that are gone are dropped.
 
 ## Limits
 
 - It's a copy of Herdr 0.1.11's `spaces` mod, so later changes to Herdr's own sidebar
   don't reach it. [RECIPE.md](RECIPE.md) is written so an agent can rebuild it on
   your version.
-- Run on Windows with Herdr 0.1.11. Nothing in it is Windows-only (paths are compared
-  the Windows way only for drive-letter paths), but macOS and Linux are untested.
+- Run on Windows with Herdr 0.1.11, with Pi, Claude Code and Codex agents. macOS and
+  Linux are untested; nothing in it is Windows-only (paths are compared the Windows
+  way, ignoring case, only for drive-letter paths, so on macOS a folder typed in
+  another case is another folder). On another machine, only the folder check was
+  tried (on Linux).
 - Projects live in this computer's Herdr, so another computer connected to the same
   machine has its own list.
 

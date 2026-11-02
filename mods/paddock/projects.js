@@ -38,7 +38,17 @@ const put = (store, machine, e) => ({ ...store, [machineKey(machine)]: e });
 export const projectList = (store, machine) => entry(store, machine).list;
 export const placedOf = (store, machine) => entry(store, machine).of;
 
-const newId = (root) => "p" + [...norm(root)].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 2166136261).toString(36);
+// An id from the folder, made unique in the list (a project's folder can change).
+const newId = (root, list) => {
+  const base = "p" + [...norm(root)].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 2166136261).toString(36);
+  let id = base, n = 1;
+  while (list.some((p) => p.id === id)) id = `${base}-${++n}`;
+  return id;
+};
+
+// Whether another project of the machine has this folder already.
+export const taken = (store, machine, root, except = null) =>
+  entry(store, machine).list.some((p) => p.id !== except && norm(p.root) === norm(root));
 
 // The store with a project added (no change when its folder is listed already).
 // `auto`: found from a repo a space opened in; one the person removed stays out.
@@ -46,7 +56,7 @@ export function addProject(store, machine, root, { name, auto = false } = {}) {
   const e = entry(store, machine);
   if (e.list.some((p) => norm(p.root) === norm(root))) return store;
   if (auto && e.removed.some((r) => norm(r) === norm(root))) return store;
-  const list = [...e.list, { id: newId(root), root, name: name || baseName(root), auto }];
+  const list = [...e.list, { id: newId(root, e.list), root, name: name || baseName(root), auto }];
   const removed = auto ? e.removed : e.removed.filter((r) => norm(r) !== norm(root));
   return put(store, machine, { ...e, list, removed });
 }
@@ -60,16 +70,26 @@ export function removeProject(store, machine, id) {
   return put(store, machine, { list: e.list.filter((x) => x.id !== id), removed: [...e.removed.filter((r) => norm(r) !== norm(p.root)), p.root], of });
 }
 
-const change = (store, machine, id, fn) => {
-  const e = entry(store, machine);
-  return put(store, machine, { ...e, list: e.list.map((p) => (p.id === id ? fn(p) : p)) });
-};
-
-export const renameProject = (store, machine, id, name) => change(store, machine, id, (p) => ({ ...p, name: name || baseName(p.root) }));
-
 // A new name and folder; an empty name goes back to the folder's.
-export const editProject = (store, machine, id, { name, root }) =>
-  change(store, machine, id, (p) => ({ ...p, root: root || p.root, name: name || baseName(root || p.root) }));
+// A new name and folder; an empty name goes back to the folder's. A folder another
+// project has is refused (no change). The folder left behind is remembered as
+// removed, so a repo there isn't added back by itself.
+export function editProject(store, machine, id, { name, root }) {
+  const e = entry(store, machine), p = e.list.find((x) => x.id === id);
+  if (!p) return store;
+  const to = root || p.root;
+  if (taken(store, machine, to, id)) return store;
+  const moved = norm(to) !== norm(p.root);
+  const removed = moved ? [...e.removed.filter((r) => norm(r) !== norm(p.root) && norm(r) !== norm(to)), p.root] : e.removed;
+  const list = e.list.map((x) => (x.id === id ? { ...x, root: to, name: name || baseName(to) } : x));
+  return put(store, machine, { ...e, list, removed });
+}
+
+// Spaces dragged in or out that are gone (`live`: the ids that still exist on the machine).
+export function prunePlaced(store, machine, live) {
+  const e = entry(store, machine), of = Object.fromEntries(Object.entries(e.of).filter(([id]) => live.has(id)));
+  return Object.keys(of).length === Object.keys(e.of).length ? store : put(store, machine, { ...e, of });
+}
 
 // The project `id` moved to where `to` is (before it when moving up, after it down).
 export function reorderProject(store, machine, id, to) {

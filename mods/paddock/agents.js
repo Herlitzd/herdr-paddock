@@ -6,14 +6,8 @@ import { div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { run } from "herdr";
 import { session } from "./session.js";
-
-export function duration(ms) {
-  const m = Math.floor(ms / 60000);
-  if (m < 1) return "<1m";
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
-}
+import { duration, kidStatus } from "./agents-data.js";
+export { duration, kidStatus, tree, byParent } from "./agents-data.js";
 
 // What a row says: "Pi · Fix login redirect", or the program alone.
 export function label(a) {
@@ -52,24 +46,6 @@ export function agentRow(a, t, { inset = false, since = 0, now = Date.now() } = 
       .child(div().min_w(0).flex_1().truncate().text_color(t.muted).child(s)))
     .when(!s, (el) => el.child(div().flex_1()))
     .when(since > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - since))));
-}
-
-// ---- sub-agents ----
-// Terminals an agent started (`hc run`) have no pane, so agents() leaves them out;
-// terminals() names their `parent`. As Herdr's Agents list does: an error counts as
-// needing you, and a sub-agent is never done (it reports to its parent).
-export function kidStatus(k, listed) {
-  const s = listed.get(k.address) ?? k.status;
-  return s === "error" ? "blocked" : s === "done" ? "idle" : s;
-}
-
-// The live sub-agents of `addr`, depth first, each with the tree lines before it.
-export function tree(all, addr, lead = []) {
-  const kids = all.filter((k) => k.parent === addr && k.state === "live");
-  return kids.flatMap((k, i) => {
-    const last = i === kids.length - 1;
-    return [{ k, lines: [...lead, last ? "└" : "├"] }, ...tree(all, k.address, [...lead, last ? "" : "│"])];
-  });
 }
 
 // A sub-agent's row under its parent's: tree lines, its light, what it runs. A click peeks at it.

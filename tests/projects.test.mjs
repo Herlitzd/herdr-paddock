@@ -1,5 +1,6 @@
 // node tests/projects.test.mjs: the project list and grouping spaces into it.
-import { repoRoot, norm, inside, addProject, removeProject, renameProject, editProject, reorderProject, placeSpace, placedOf, projectList, projectFor, groupRows, reposToAdd, urgent, fromSpaceFolders } from "../mods/paddock/projects.js";
+import { repoRoot, norm, inside, addProject, removeProject, editProject, taken, prunePlaced, reorderProject, placeSpace, placedOf, projectList, projectFor, groupRows, reposToAdd, urgent, fromSpaceFolders } from "../mods/paddock/projects.js";
+import { byParent, tree, kidStatus, duration } from "../mods/paddock/agents-data.js";
 
 let bad = 0, count = 0;
 const check = (what, got, want) => {
@@ -31,8 +32,8 @@ check("added", projectList(s, null).map((p) => [p.name, p.auto]), [["app", true]
 check("per machine", projectList(s, "vps").map((p) => p.root), ["/home/u/app"]);
 check("no duplicate", projectList(addProject(s, null, "/w/app/"), null).length, 2);
 const app = projectList(s, null)[0];
-check("renamed", projectList(renameProject(s, null, app.id, "Web"), null)[0].name, "Web");
-check("rename to empty goes back to the folder", projectList(renameProject(s, null, app.id, ""), null)[0].name, "app");
+check("renamed", projectList(editProject(s, null, app.id, { name: "Web" }), null)[0].name, "Web");
+check("rename to empty goes back to the folder", projectList(editProject(s, null, app.id, { name: "" }), null)[0].name, "app");
 const gone = removeProject(s, null, app.id);
 check("removed", projectList(gone, null).map((p) => p.name), ["notes"]);
 check("a removed repo isn't added back by itself", projectList(addProject(gone, null, "/w/app", { auto: true }), null).length, 1);
@@ -99,6 +100,48 @@ check("urgent none", urgent([undefined, null]), null);
 const sf = JSON.stringify({ list: [{ id: "f1", name: "Work", path: "~\\code\\work" }, { id: "f2", name: "No path" }, { id: "f3", name: "Abs", path: "/srv/x" }] });
 check("from space-folders", fromSpaceFolders(sf, "C:\\Users\\dev"), [{ root: "C:\\Users\\dev\\code\\work", name: "Work" }, { root: "/srv/x", name: "Abs" }]);
 check("from a broken file", fromSpaceFolders("{", "/home/dev"), []);
+
+// Edit: a folder another project has is refused; the old folder is remembered.
+const twoP = addProject(addProject({}, null, "/w/one"), null, "/w/two");
+const [p1, p2] = projectList(twoP, null);
+check("edit onto another project's folder is refused", editProject(twoP, null, p1.id, { root: "/w/two" }), twoP);
+check("taken", [taken(twoP, null, "/w/two/"), taken(twoP, null, "/w/two", p2.id), taken(twoP, null, "/w/three")], [true, false, false]);
+const moved = editProject(twoP, null, p1.id, { root: "/w/uno" });
+check("moved folder remembered", moved[""].removed, ["/w/one"]);
+check("the old repo isn't added back by itself", projectList(addProject(moved, null, "/w/one", { auto: true }), null).length, 2);
+check("moving back clears it", editProject(moved, null, p1.id, { root: "/w/one" })[""].removed, ["/w/uno"]);
+// Ids stay unique when a folder comes back to a listed project's old id.
+const back = addProject(moved, null, "/w/one");
+check("unique ids", new Set(projectList(back, null).map((p) => p.id)).size, 3);
+
+// Pruning placements of spaces that are gone.
+let pl = placeSpace(placeSpace(twoP, null, "s1", p1.id), null, "s2", p2.id);
+check("prune keeps live", placedOf(prunePlaced(pl, null, new Set(["s1", "s2"])), null), { s1: p1.id, s2: p2.id });
+check("prune drops gone", placedOf(prunePlaced(pl, null, new Set(["s1"])), null), { s1: p1.id });
+check("prune with nothing gone is the same store", prunePlaced(pl, null, new Set(["s1", "s2"])), pl);
+
+// Another machine: its own list, prefixed space ids, its repos.
+let vps = addProject({}, "vps", "/home/u/app", { auto: true });
+const pv = projectList(vps, "vps")[0];
+vps = placeSpace(vps, "vps", "vps/sp1", pv.id);
+check("remote placement by prefixed id", placedOf(vps, "vps"), { "vps/sp1": pv.id });
+check("this computer untouched", projectList(vps, null), []);
+const remoteRows = [{ w: { id: "vps/sp2", name: "app" }, i: 0, place: "/home/u/app/src", g: { name: "app", repo: JSON.stringify(["vps", "/home/u/app/.git"]), linked: false } }];
+check("remote repo already listed", reposToAdd(vps, "vps", remoteRows), []);
+check("remote row belongs", groupRows(projectList(vps, "vps"), remoteRows, placedOf(vps, "vps")).projects[0].rows.map((r) => r.w.id), ["vps/sp2"]);
+
+// The agent rows' data.
+const kidsOf = byParent([
+  { address: "t2", parent: "t1", state: "live" },
+  { address: "t3", parent: "t2", state: "live" },
+  { address: "t4", parent: "t1", state: "finished" },
+  { address: "t5", parent: "t1", state: "live" },
+  { address: "t1", parent: "t3", state: "live" },
+]);
+check("sub-agent tree", tree(kidsOf, "t1").map((s) => [s.k.address, s.lines.join("")]), [["t2", "├"], ["t3", "│└"], ["t5", "└"]]);
+check("kid status", ["error", "done", "working"].map((st) => kidStatus({ address: "x", status: st }, new Map())), ["blocked", "idle", "working"]);
+check("kid status from agents()", kidStatus({ address: "x", status: "idle" }, new Map([["x", "blocked"]])), "blocked");
+check("durations", [0, 59999, 60000, 3599999, 3600000, 86400000 * 2].map(duration), ["<1m", "<1m", "1m", "59m", "1h", "2d"]);
 
 console.log(bad ? `${bad} of ${count} failed` : `all ${count} passed`);
 process.exit(bad ? 1 : 0);

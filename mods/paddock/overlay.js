@@ -8,23 +8,25 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { props, closeOverlay, openOverlay, run, theme, shared, setShared, exec, home, pickFolder } from "herdr";
-import { projectList, addProject, removeProject, editProject } from "./projects.js";
+import { projectList, addProject, removeProject, editProject, taken } from "./projects.js";
 
 export const STORE = "paddock.projects";
 export const store = () => shared(STORE) ?? {};
 export const project = (machine, id) => projectList(store(), machine).find((p) => p.id === id);
 export const newSpaceIn = (p, machine) => run("space.new", { folder: p.root, ...(machine ? { machine } : {}) });
 
-// A folder's real path on its machine, or null when there's none. git says which:
-// "cannot change to" a missing folder, anything else (a repo or not) exists.
+// A folder's real path on its machine, or null when there's none. There, the shell
+// expands "~" and resolves the path. Here, a program can't start in a missing folder
+// (exec rejects), whatever it would have said, in whatever language.
 async function existing(path, machine) {
   if (machine) {
-    const r = await exec("sh", ["-c", 'cd -- "$1" 2>/dev/null && pwd -P', "sh", path.replace(/^~(?=$|\/)/, "$HOME")], { on: machine }).catch(() => null);
+    const script = 'p=$1; case $p in "~"|"~/"*) p=$HOME${p#"~"};; esac; cd -- "$p" 2>/dev/null && pwd -P';
+    const r = await exec("sh", ["-c", script, "sh", path], { on: machine }).catch(() => null);
     return r?.code === 0 ? r.stdout.trim() : null;
   }
   const full = path.replace(/^~(?=$|[\\/])/, home());
-  const r = await exec("git", ["-C", full, "rev-parse", "--git-dir"]).catch(() => null);
-  return r && !/cannot change to/i.test(r.stderr) ? full : null;
+  const r = await exec("git", ["rev-parse", "--git-dir"], { cwd: full }).catch(() => null);
+  return r ? full : null;
 }
 
 export class Overlay {
@@ -89,6 +91,7 @@ export class Overlay {
       const root = was && path === was.root ? was.root : await existing(path, p.machine);
       this.busy = false;
       if (!root) { this.error = `No folder at ${path}${p.machine ? ` on ${p.machine}` : ""}.`; cx.notify(); return; }
+      if (taken(store(), p.machine, root, was?.id ?? null)) { this.error = "Another project has this folder."; cx.notify(); return; }
       setShared(STORE, was ? editProject(store(), p.machine, p.id, { name, root }) : addProject(store(), p.machine, root, { name }));
       closeOverlay(p.overlay);
     });

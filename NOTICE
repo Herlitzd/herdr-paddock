@@ -9,10 +9,10 @@ under the Apache License, Version 2.0:
   spaces by project, show each space's agents under it, pin spaces, and draw
   every row with one kind of tile. It says so at its top.
 
-mods/paddock/session.js is the same file as in herdr-session-titles
-(https://github.com/choam2426/herdr-session-titles), by the same author.
-mods/paddock/projects.js, overlay.js, agents.js and tests/ are original to this
-project.
+mods/paddock/session.js has the same code as in herdr-session-titles
+(https://github.com/choam2426/herdr-session-titles), by the same author, with its
+header comment adapted. mods/paddock/projects.js, overlay.js, agents.js,
+agents-data.js and tests/ are original to this project.
 
 mods/paddock/icons/panels-top-left.svg is from Lucide (https://lucide.dev),
 Copyright Lucide Icons and Contributors, licensed under the ISC License: see
