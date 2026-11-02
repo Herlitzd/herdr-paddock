@@ -456,9 +456,6 @@ export default class Spaces extends View {
 
   row({ w, i, g, tree, inset, worktree }, t) {
     const on = w.active;
-    const colors = shared("space.colors") ?? {};
-    const color = colors[w.id] ?? "ansi6";
-    const fill = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
@@ -509,9 +506,9 @@ export default class Spaces extends View {
           .when(Boolean(tree), el => el.pl(22))
           .child(this.agentChevron(w, t))
           .when(Boolean(tree), el => el.child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim)))
-          // A space's tile, as a project's: its color, a terminal, or a branch for a worktree.
-          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center()
-            .child(svg(`mods/workspace-chrome/${worktree ? "git-branch" : "terminal"}.svg`).size(12).text_color("#ffffff"))))
+          // A space's tile, as a project's: a terminal, or a branch for a worktree.
+          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(t.raised).items_center().justify_center()
+            .child(svg(`mods/workspace-chrome/${worktree ? "git-branch" : "terminal"}.svg`).size(12).text_color(t.muted))))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
           .child(this.agentStatus(w, t))
