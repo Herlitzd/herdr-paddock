@@ -2,8 +2,8 @@
 //   "project-menu"  a project's right-click menu: its color, New space here,
 //                   Edit project…, Remove project
 //   "edit"          a project's name and folder
-//   "add"           a folder to add as a project on another machine (here,
-//                   the system's folder picker does it)
+//   "add"           a new project: its name and folder (Choose… opens the system's
+//                   folder picker on this computer; another machine's is typed)
 // Styled like Herdr's menu and prompt.
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
@@ -45,7 +45,7 @@ export class Overlay {
       input.on("focus", (_e, cx) => { this.focus = input; cx.notify(); });
       return input;
     };
-    this.name = p.role === "edit" ? field(was?.name ?? "", "") : null;
+    this.name = field(was?.name ?? "", "");
     this.path = field(was?.root ?? "", p.machine ? "~/code/app" : "");
     const first = this.name ?? this.path;
     const value = first.value();
@@ -98,7 +98,7 @@ export class Overlay {
       const root = was && path === was.root ? was.root : await existing(path, p.machine);
       this.busy = false;
       if (!root) { this.error = `No folder at ${path}${p.machine ? ` on ${p.machine}` : ""}.`; cx.notify(); return; }
-      setShared(STORE, was ? editProject(store(), p.machine, p.id, { name, root }) : addProject(store(), p.machine, root));
+      setShared(STORE, was ? editProject(store(), p.machine, p.id, { name, root }) : addProject(store(), p.machine, root, { name }));
       closeOverlay(p.overlay);
     });
   }
@@ -149,9 +149,9 @@ export class Overlay {
       .on_key_down((e, cx) => { if (e.key === "escape") { closeOverlay(p.overlay); cx.stop_propagation(); } })
       .w_full().min_h(0).p(20).gap(16).bg(t.popover).text_color(t.foreground)
       .child(h_flex().items_center()
-        .child(div().flex_1().text_size(15).font_semibold().child(edit ? "Edit project" : `New project on ${p.machine}`))
+        .child(div().flex_1().text_size(15).font_semibold().child(edit ? "Edit project" : p.machine ? `New project on ${p.machine}` : "New project"))
         .child(div().text_size(11).text_color(t.dim).child("Esc")))
-      .when(edit, (el) => el.child(field("Name", this.name, "Empty goes back to the folder's name.")))
+      .child(field("Name", this.name, edit ? "Empty goes back to the folder's name." : "Empty: the folder's name."))
       .child(field("Folder", this.path, p.machine ? `A path on ${p.machine}, such as ~/code/app.` : "Spaces working in it belong to the project; its + opens one there.", choose))
       .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.blocked).child(this.error)))
       .child(h_flex().pt(4).gap(8).justify_end()
@@ -163,4 +163,4 @@ export class Overlay {
 const open = (p, how) => openOverlay({ mod: "spaces-plus", ...how, props: p });
 export const openMenu = (machine, id) => open({ role: "project-menu", machine, id }, { kind: "popup", width: 214, height: 150 });
 export const openEdit = (machine, id) => open({ role: "edit", machine, id }, { kind: "dialog", width: 460, height: 300 });
-export const openAdd = (machine) => open({ role: "add", machine }, { kind: "dialog", width: 460, height: 230 });
+export const openAdd = (machine) => open({ role: "add", machine }, { kind: "dialog", width: 460, height: 300 });

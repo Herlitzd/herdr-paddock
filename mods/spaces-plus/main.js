@@ -9,7 +9,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, pickFolder, readTextFile } from "herdr";
+import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, readTextFile } from "herdr";
 import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders, placedOf, placeSpace, reorderProject, naturalProject } from "./projects.js";
 import { Overlay, STORE, store, openMenu, openAdd, newSpaceIn } from "./overlay.js";
 
@@ -52,12 +52,6 @@ export function glyph(status) {
 
 export function tone(t, status) {
   return t[status] ?? t.unknown;
-}
-
-// A folder on this computer, from the system's picker, added as a project.
-async function pickProject() {
-  const root = await pickFolder({ prompt: "Choose the project's folder" });
-  if (root) setShared(STORE, addProject(store(), null, root));
 }
 
 export default class Spaces extends View {
@@ -288,7 +282,7 @@ export default class Spaces extends View {
           .when(!connected, el => el.child(div().flex_none().child((machine?.state ?? "asleep").replace(/_/g, " "))))
           .when(connected && this.mode === "project", el => el.child(div().id(`machine-project-${m ?? "local"}`).flex_none().px(3).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
             .tooltip("New project")
-            .on_click((_e, cx) => { cx.stop_propagation(); m ? openAdd(m) : pickProject(); })
+            .on_click((_e, cx) => { cx.stop_propagation(); openAdd(m); })
             .child(svg("mods/workspace-chrome/folder-plus.svg").size(12))))
           .when(connected, el => el.child(div().id(`machine-add-${m ?? "local"}`).flex_none().px(4).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
             .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", m ? { machine: m } : {}); }).child("+")))
@@ -529,7 +523,7 @@ export default class Spaces extends View {
           .when(!collapsed && this.mode === "project", el => el.child(div().id("project-new").size(26).flex_none().flex().items_center().justify_center().rounded(6)
             .hover(s => s.bg(t.hover).text_color(t.foreground))
             .tooltip("New project: a folder on this computer")
-            .on_click(() => pickProject())
+            .on_click(() => openAdd(null))
             .child(svg("mods/workspace-chrome/folder-plus.svg").size(14))))
           .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
             .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14)))))
