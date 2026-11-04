@@ -552,7 +552,9 @@ export default class Spaces extends View {
     const terms = terminals();
     this.kids = byParent(terms);
     // Sub-agents an agent runs inside itself, from the labels its hooks put on its terminal.
-    this.hooked = new Map(terms.map((k) => [k.address, hookSubs(k.labels)]).filter(([, h]) => h.length));
+    // One its hooks never saw end (the agent killed mid-run) stops showing after 12 hours;
+    // the agent's next session start clears it.
+    this.hooked = new Map(terms.map((k) => [k.address, hookSubs(k.labels).filter((h) => !h.at || now - h.at < 12 * 3600000)]).filter(([, h]) => h.length));
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     for (const a of list) {
       (by[a.space] ??= []).push(a);
