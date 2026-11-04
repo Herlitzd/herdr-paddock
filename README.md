@@ -28,9 +28,11 @@ A mod for the [Herdr](https://herdr.dev) desktop app. It replaces the shipped
   done, working pulsing, a ring when idle), the program, its session (read from its
   terminal title as [herdr-session-titles](https://github.com/choam2426/herdr-session-titles)
   does: Pi, Claude Code and Codex tested; OpenCode from its source) and the time in
-  that state. A click goes to the agent. Sub-agents (started with
-  `hc run`) hang under their parent with tree lines; a click peeks at one. The
-  chevron before a space folds its agents.
+  that state. A click goes to the agent. Sub-agents hang under their parent with
+  tree lines: those started as terminals with `hc run` (a click peeks at one), and,
+  with the optional hooks below, those Claude Code and Codex run inside themselves
+  (their type and time; a click goes to the parent). The chevron before a space
+  folds its agents.
 - **Pin** (the pin on a space's row, on hover) keeps a space at the top of its project.
 - **One kind of tile** for every row: a project is a branch (a git repository) or a
   folder, a space a window in panes, a worktree a branch.
@@ -70,6 +72,53 @@ By hand:
 
 To go back: `herdr-app do layout.switch '{"name":"main"}'`.
 
+## Sub-agents of Claude Code and Codex (optional)
+
+Claude Code and Codex run their sub-agents inside themselves, so Herdr doesn't see
+them. Paddock shows them when their **hooks** tell it: on each sub-agent's start and
+end, a small script puts or removes a label on the agent's own Herdr terminal
+(`paddock.sub.<app>.<id>`), which Paddock reads. The sidebar works without them.
+
+The hooks are registered **asynchronously**, so the agent never waits for them. The
+scripts print nothing and always exit 0, so they can't block or change what the
+agent does. They read the hook's event JSON from standard input and keep only the
+event name, the session id, the sub-agent's id and type. They use no network and
+open no file except, for Codex, its `session_index.jsonl` (to find the thread's
+terminal, below). They run `hc` (and `jq` when it's there).
+
+**Install** (ask the person first; an agent installing it does the same):
+
+1. Back up the agent's config file.
+2. Take `mods/paddock/hooks/claude.json` or `codex.json`, replace `<HOOKS>` with the
+   absolute path of `mods/paddock/hooks` in forward slashes (for example
+   `C:/Users/me/.config/herdr-app/mods/paddock/hooks` or
+   `/home/me/.config/herdr-app/mods/paddock/hooks`; it follows `$HERDR_APP_HOME`).
+3. Merge it: for each event, **append** its group at the end of that event's list in
+   `~/.claude/settings.json` or `~/.codex/hooks.json` (`$CODEX_HOME` if set). Keep every
+   existing group (another tool's hooks, such as Orca's) where it is. A group whose
+   command contains `/paddock/hooks/subagents.` is Paddock's: update it in place
+   instead of adding a second one.
+4. Codex asks to trust new or changed hooks: open `/hooks` in Codex and trust the
+   three. It trusts hooks by their position, so don't insert or remove a group in
+   front of another one, or that one has to be trusted again.
+5. Start a new session of the agent; sub-agents show from then on.
+
+To remove them, delete Paddock's groups (the last in each list) and nothing else.
+
+**How each agent runs them**
+
+| | Windows | macOS, Linux |
+|---|---|---|
+| Claude Code | `sh` through Git Bash, which Claude Code uses on Windows | `sh` |
+| Codex | `powershell.exe` (`commandWindows`; Git's `sh` isn't on Windows' own PATH) | `sh` through `$SHELL -lc` |
+
+Codex usually runs hooks from its shared background server, which wasn't started in
+a Herdr terminal, so the hook finds the terminal itself: the live Codex terminal whose
+title holds the thread's name, else the only live Codex terminal in the session's
+folder. When it can't tell (two Codex terminals in one folder on threads without a
+name), it shows nothing rather than the wrong row. Running `codex --no-daemon` avoids
+the guess.
+
 ## What it runs, reads and keeps
 
 - As Herdr's own sidebar does: `git` in your spaces' folders (branch, ahead/behind,
@@ -80,6 +129,7 @@ To go back: `herdr-app do layout.switch '{"name":"main"}'`.
   another machine with `sh` there (which also expands `~`).
 - On first start only, it reads `~/.config/herdr-space-folders.json` (the
   space-folders mod's file) if it exists, to turn its folders into projects.
+- With the optional hooks: see the section above.
 - No network. Projects are kept in Herdr's shared state (`paddock.projects`), per
   machine. Folds, pins and when each agent last changed state are kept in the mod's
   own storage; entries for spaces and agents that are gone are dropped.
@@ -96,11 +146,21 @@ To go back: `herdr-app do layout.switch '{"name":"main"}'`.
   tried (on Linux).
 - Projects live in this computer's Herdr, so another computer connected to the same
   machine has its own list.
+- The sub-agent hooks were run end to end on Windows with Claude Code and Codex; on
+  macOS and Linux only their script logic was tested here (with a stand-in `hc`).
+  For an agent on another machine, the hooks and the scripts must be installed on that
+  machine, with its paths; that hasn't been tried.
+- A sub-agent whose end the hooks never see (the agent killed mid-run) shows until the
+  agent's next session starts in that terminal, or for 12 hours. Only rows under a
+  running agent of the same app show at all.
+- With `-ExecutionPolicy Bypass` refused by a Group Policy, or PowerShell in constrained
+  language mode, Codex's Windows hook does nothing (Codex isn't affected).
 
 ## Development
 
 ```sh
-npm test    # projects, belonging, drag in and out, reordering, the space-folders import
+npm test    # projects, belonging, drag in and out, reordering, the space-folders import,
+            # sub-agent trees and hook labels
 ```
 
 ## License

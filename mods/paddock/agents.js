@@ -7,7 +7,7 @@ import { h_flex } from "gpui-base";
 import { run } from "herdr";
 import { session } from "./session.js";
 import { duration, kidStatus } from "./agents-data.js";
-export { duration, kidStatus, tree, byParent, hookSubs, joinSubs } from "./agents-data.js";
+export { duration, kidStatus, tree, byParent, hookSubs, joinSubs, sameApp } from "./agents-data.js";
 
 // What a row says: "Pi · Fix login redirect", or the program alone.
 export function label(a) {
@@ -63,7 +63,7 @@ export function subRow(item, t, { inset = false, listed, parent, now = Date.now(
   const { lines } = item;
   if (item.hook) {
     const h = item.hook, pic = icon(parent?.program, 12, t.muted);
-    return subBox(`space-hook-${parent?.address}-${h.id}`, t, inset)
+    return subBox(`space-hook-${parent?.address}-${h.app}-${h.id}`, t, inset)
       .tooltip(`${parent?.program?.name || h.app} subagent${h.type ? `: ${h.type}` : ""}`)
       .on_click((_e, cx) => { cx.stop_propagation(); if (parent?.pane) run("pane.focus", { pane: parent.pane }); })
       .children(treeLines(lines, t))

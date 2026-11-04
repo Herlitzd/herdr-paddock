@@ -12,7 +12,7 @@ under the Apache License, Version 2.0:
 mods/paddock/session.js has the same code as in herdr-session-titles
 (https://github.com/choam2426/herdr-session-titles), by the same author, with its
 header comment adapted. mods/paddock/projects.js, overlay.js, agents.js,
-agents-data.js and tests/ are original to this project.
+agents-data.js, hooks/ and tests/ are original to this project.
 
 mods/paddock/icons/panels-top-left.svg is from Lucide (https://lucide.dev),
 Copyright Lucide Icons and Contributors, licensed under the ISC License: see

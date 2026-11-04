@@ -1,6 +1,6 @@
 // node tests/projects.test.mjs: the project list and grouping spaces into it.
 import { repoRoot, norm, inside, addProject, removeProject, editProject, taken, prunePlaced, reorderProject, placeSpace, placedOf, projectList, projectFor, groupRows, reposToAdd, urgent, fromSpaceFolders } from "../mods/paddock/projects.js";
-import { byParent, tree, kidStatus, duration, hookSubs, joinSubs } from "../mods/paddock/agents-data.js";
+import { byParent, tree, kidStatus, duration, hookSubs, joinSubs, sameApp, HOOK_MAX_AGE } from "../mods/paddock/agents-data.js";
 
 let bad = 0, count = 0;
 const check = (what, got, want) => {
@@ -157,6 +157,18 @@ const treeOnly = tree(kidsOf, "t1");
 const joined = joinSubs(treeOnly, hookSubs(labels));
 check("joined lines", joined.map((s) => (s.k ? s.k.address : s.hook.id) + ":" + s.lines.join("")), ["t2:├", "t3:│└", "t5:├", "a1:├", "a2:└"]);
 check("joined, no hooks keeps the tree", joinSubs(treeOnly, []).map((s) => s.lines.join("")), ["├", "│└", "└"]);
+
+// Hook sub-agents: age cap, app matching, lines under a last top-level terminal with children.
+check("hook subs, old ones hidden", hookSubs({ "paddock.sub.codex.o": '{"app":"codex","at":1000}', "paddock.sub.codex.n": '{"app":"codex","at":5000}' }, 1000 + HOOK_MAX_AGE).map((h) => h.id), ["n"]);
+check("hook subs, no time kept", hookSubs({ "paddock.sub.codex.z": '{"app":"codex"}' }, 1e15).map((h) => h.id), ["z"]);
+check("hook sub type with an escaped space", hookSubs({ "paddock.sub.codex.s": '{"app":"codex","type":"general\u0020purpose","at":1}' })[0].type, "general purpose");
+check("same app", [sameApp("claude-code", "claude"), sameApp("codex", "codex"), sameApp("codex", "claude"), sameApp("pi", "claude"), sameApp(null, "codex")], [true, true, false, false, false]);
+const deeper = byParent([
+  { address: "u2", parent: "u1", state: "live" },
+  { address: "u3", parent: "u1", state: "live" },
+  { address: "u4", parent: "u3", state: "live" },
+]);
+check("joined under a last child with children", joinSubs(tree(deeper, "u1"), [{ id: "h", app: "codex", type: "", at: 1 }]).map((s) => (s.k ? s.k.address : s.hook.id) + ":" + s.lines.join("")), ["u2:├", "u3:├", "u4:│└", "h:└"]);
 
 console.log(bad ? `${bad} of ${count} failed` : `all ${count} passed`);
 process.exit(bad ? 1 : 0);

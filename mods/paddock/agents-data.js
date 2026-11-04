@@ -27,11 +27,13 @@ export function byParent(all) {
   return kids;
 }
 
-// Sub-agents an agent runs inside itself (Claude Code's, Codex's, Pi's), which have no
+// Sub-agents an agent runs inside itself (Claude Code's, Codex's), which have no
 // terminal: its hooks put each on the agent's own terminal as a label
-// `paddock.sub.<app>.<id>` = {"app", "type", "at"}. Oldest first; a label that isn't
-// that shape is skipped.
-export function hookSubs(labels) {
+// `paddock.sub.<app>.<id>` = {"app", "type", "at", "s"}. Oldest first; a label that
+// isn't that shape is skipped, and so is one older than 12 hours (its hooks never saw
+// it end: the agent was killed mid-run) when `now` is given.
+export const HOOK_MAX_AGE = 12 * 3600000;
+export function hookSubs(labels, now = null) {
   const out = [];
   for (const [k, v] of Object.entries(labels ?? {})) {
     const m = /^paddock\.sub\.([a-z0-9-]+)\.(.+)$/.exec(k);
@@ -39,10 +41,20 @@ export function hookSubs(labels) {
     let d;
     try { d = JSON.parse(v); } catch { continue; }
     if (!d || typeof d !== "object") continue;
-    out.push({ id: m[2], app: typeof d.app === "string" ? d.app : m[1], type: typeof d.type === "string" ? d.type : "", at: Number.isFinite(d.at) ? d.at : 0 });
+    const h = { id: m[2], app: typeof d.app === "string" ? d.app : m[1], type: typeof d.type === "string" ? d.type : "", at: Number.isFinite(d.at) ? d.at : 0 };
+    if (now !== null && h.at && now - h.at >= HOOK_MAX_AGE) continue;
+    out.push(h);
   }
   return out.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
 }
+
+// Whether a hook sub-agent's app is its parent agent's: "claude" under Claude Code
+// ("claude-code"), "codex" under Codex. Another app's leftover label (an earlier agent in
+// the same terminal) doesn't show under this one.
+export const sameApp = (parentApp, app) => {
+  const p = String(parentApp ?? "").toLowerCase(), a = String(app ?? "").toLowerCase();
+  return Boolean(p && a) && (p === a || p.startsWith(`${a}-`) || p.startsWith(a));
+};
 
 // One tree under an agent: its terminal sub-agents (tree()), then its hook sub-agents
 // (hookSubs()), with the lines redrawn so only the very last top-level row ends it.

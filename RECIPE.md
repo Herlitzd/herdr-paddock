@@ -45,7 +45,11 @@ not named here is Herdr's shipped `spaces` mod as it is.
   (else `dim`).
 - **A sub-agent's row**, 22px, 11.5px text, under its parent: tree lines (9px wide,
   1.5px `input` strokes, `└`/`├` with a 5px rounded corner), a 7px light, its 12px
-  icon and its name (`muted`).
+  icon and its name (`muted`). A sub-agent from an agent's hooks (one it runs inside
+  itself) draws the same, after the terminal ones: always the working light, its
+  parent's program icon, its type (`Explore`, `general-purpose`, Codex's `default`;
+  "subagent" without one), its time on the right (11px `dim`), and a tooltip
+  "<program> subagent: <type>".
 - **While a space is dragged** out of a project: below the list, a 34px dashed box
   (`border`, `accent` while over it) reading "Drop here to take it out of its project".
 - **The project menu** (right-click), 200×112 popup on `popover`: 31px items with a
@@ -93,8 +97,8 @@ not named here is Herdr's shipped `spaces` mod as it is.
   Releasing anywhere else changes nothing.
 - **Clicks**: a project's row folds it; its `+` and New space here run `space.new`
   with its folder (and machine); a space's row selects it; a space's chevron folds its
-  agents; an agent's row runs `pane.focus` with its pane; a sub-agent's row runs
-  `terminal.peek`; the pin pins. Right-click on a space opens Herdr's own space menu.
+  agents; an agent's row runs `pane.focus` with its pane; a terminal sub-agent's row
+  runs `terminal.peek`, a hook sub-agent's row focuses its parent; the pin pins. Right-click on a space opens Herdr's own space menu.
 - **Agents** are Herdr's agents (those with a pane), under their space. The session
   is read from each agent's terminal title as herdr-session-titles does (Pi
   `π - <session> - <folder>`, Codex `<thread> | <project>`, Claude Code's title,
@@ -103,6 +107,16 @@ not named here is Herdr's shipped `spaces` mod as it is.
   the Agents list does); the times redraw every 30 s while any agent row shows.
 - **Sub-agents** are the live terminals an agent started, depth first, under it. An
   error counts as needing you and done as idle (a sub-agent reports to its parent).
+- **Hook sub-agents** (optional): Claude Code and Codex run sub-agents inside
+  themselves. With Paddock's hooks registered in them, each sub-agent's start puts a
+  label on the agent's own terminal and its end removes it (a Claude Code API error,
+  StopFailure, too, and a session's end its own). A new session (startup or resume,
+  not compaction) clears what an earlier one left. The sidebar lists them under their
+  agent, only an agent of the same app, and hides one older than 12 hours. The hooks
+  run asynchronously, print nothing and always exit 0: they can't block or change the
+  agent. Codex usually runs hooks from its shared background server, outside Herdr, so
+  its hook finds the terminal by the thread's name in its title, else as the only live
+  Codex terminal in the session's folder, else does nothing.
 - **Statuses** never change wording; a folded project or space shows its most urgent
   agent's (blocked > done > working > idle), from its spaces' own statuses or its
   agents'. Sub-agents don't count there.
@@ -140,7 +154,21 @@ not named here is Herdr's shipped `spaces` mod as it is.
     another machine with `sh -c 'p=$1; case $p in "~"|"~/"*) p=$HOME${p#"~"};; esac;
     cd -- "$p" 2>/dev/null && pwd -P'`.
   - `agents.js` (draws): `agentRow`, `light`, `label`, `subRow`. `agents-data.js` (no
-    herdr imports, tested): `duration`, `kidStatus`, `byParent`, `tree`.
+    herdr imports, tested): `duration`, `kidStatus`, `byParent`, `tree`, `hookSubs`
+    (labels `paddock.sub.<app>.<id>` = `{"app","type","at","s"}`, oldest first, older
+    than `HOOK_MAX_AGE` dropped), `sameApp`, `joinSubs` (terminal and hook sub-agents in
+    one tree, lines redrawn).
+  - `hooks/subagents.sh` (POSIX sh: Claude Code everywhere, Codex on macOS/Linux) and
+    `hooks/subagents.ps1` (Windows PowerShell 5.1: Codex on Windows), taking the app
+    (`claude` or `codex`): read the hook JSON from stdin (jq when present, else sed),
+    keep `hook_event_name`, `session_id`, `agent_id`, `agent_type`, `source`, filtered
+    to plain characters, and run `hc label <terminal> <key>=<json>` / `<key>=`, `hc get
+    <terminal> --json` (cleanup), and for Codex without `HC_TERMINAL_ID` `hc ls --json`,
+    `hc get`, and `$CODEX_HOME/session_index.jsonl` (thread id -> name).
+  - `hooks/claude.json`, `hooks/codex.json`: the config groups to append to
+    `~/.claude/settings.json` (SubagentStart, SubagentStop, StopFailure, SessionStart,
+    SessionEnd) and `~/.codex/hooks.json` (SubagentStart, SubagentStop, SessionStart;
+    with `commandWindows`), `"async": true`, `<HOOKS>` the folder's absolute path.
   - `session.js`: herdr-session-titles' code, its header comment adapted.
   - `icons/panels-top-left.svg` (Lucide, ISC; `icons/LICENSE-lucide.txt`). Other icons
     are Herdr's `mods/workspace-chrome/` ones: `git-branch`, `folder`, `folder-plus`,
@@ -152,9 +180,32 @@ not named here is Herdr's shipped `spaces` mod as it is.
   `space.select`, `space.move`, `pane.focus`, `terminal.peek`), `openOverlay`,
   `closeOverlay`, `shared`/`setShared`, `exec` (`git`, and `sh` on another machine),
   `hc` (`machine ls`, as shipped), `watchFolder` (as shipped), `readTextFile`,
-  `pickFolder`, `home`, `props`, `theme`, `layout`, `window`. No network.
+  `pickFolder`, `home`, `props`, `theme`, `layout`, `window`. No network. The hook
+  scripts run outside the mod, in the agents: `hc`, and `jq` when present.
 
 ## Watch out
+
+- Installing the hooks edits another program's config: ask first, back up, and append
+  Paddock's group at the end of each event's list, leaving every other group (another
+  tool's hooks) in place. Codex keys hook trust by position (`hooks.json:<event>:<group>:
+  <index>` in its config.toml): a group inserted or removed in front of another makes
+  that one untrusted. Codex then asks to trust the new hooks (`/hooks`), and a running
+  Codex keeps the hooks it started with.
+- Windows: Claude Code runs hooks with Git Bash, but Codex runs them with `cmd.exe /C`,
+  and Git's `sh.exe` (`Git\usr\bin`) isn't on Windows' own PATH; testing from Git Bash
+  hides this. Hence `commandWindows` with PowerShell.
+- Codex runs hooks from its shared background server, whose environment has no
+  `HC_TERMINAL_ID`: find the terminal another way, and do nothing when unsure.
+- Windows PowerShell 5.1 drops a native argument's inner double quotes (escape them as
+  `\"`), and an argument holding both quotes and a space is split: write a space in the
+  label's JSON as `\u0020`. pwsh 7.3+ quotes by itself: set
+  `$PSNativeCommandArgumentPassing = 'Legacy'`. Read stdin and `hc`'s output as UTF-8.
+- jq on Windows ends lines with `\r\n`: strip `\r` from what it prints.
+- A Stop can arrive before a slow Start (two async processes): wait a moment before
+  removing.
+- Claude Code also sends SessionStart after compaction and `/clear`, and Codex after
+  compaction and forks: clear only on `startup` or `resume`, or running background
+  sub-agents vanish.
 
 - The mod's own name is written in two places: `mod: "paddock"` in `overlay.js` (its
   menus and dialogs open the mod by name) and `mods/paddock/icons/` in `main.js`.
@@ -195,5 +246,8 @@ not named here is Herdr's shipped `spaces` mod as it is.
 - An agent in a space shows under it with its light, program, session and time; a
   click focuses it. A sub-agent started from it with `hc run` shows under it with tree
   lines; a click peeks at it.
+- With the hooks registered, a Claude Code or Codex sub-agent shows under its agent
+  (its type and time) while it runs and goes when it ends; on Windows, Codex's too
+  while started normally (with its background server).
 - Folding a space's agents with its chevron shows the most urgent state on its row.
 - Pinning a space moves it to the top of its project and keeps the pin shown.

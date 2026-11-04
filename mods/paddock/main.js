@@ -10,7 +10,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, agents, terminals, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, readTextFile } from "herdr";
-import { agentRow, subRow, tree, byParent, hookSubs, joinSubs } from "./agents.js";
+import { agentRow, subRow, tree, byParent, hookSubs, joinSubs, sameApp } from "./agents.js";
 import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders, placedOf, placeSpace, reorderProject, naturalProject, prunePlaced } from "./projects.js";
 import { Overlay, STORE, store, openMenu, openAdd, newSpaceIn } from "./overlay.js";
 
@@ -554,7 +554,7 @@ export default class Spaces extends View {
     // Sub-agents an agent runs inside itself, from the labels its hooks put on its terminal.
     // One its hooks never saw end (the agent killed mid-run) stops showing after 12 hours;
     // the agent's next session start clears it.
-    this.hooked = new Map(terms.map((k) => [k.address, hookSubs(k.labels).filter((h) => !h.at || now - h.at < 12 * 3600000)]).filter(([, h]) => h.length));
+    this.hooked = new Map(terms.map((k) => [k.address, hookSubs(k.labels, now)]).filter(([, h]) => h.length));
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     for (const a of list) {
       (by[a.space] ??= []).push(a);
@@ -595,7 +595,7 @@ export default class Spaces extends View {
     // then those it runs inside itself (from its hooks).
     return list.flatMap((a) => [
       agentRow(a, t, { inset, since: this.changed[a.address]?.at ?? 0, now }),
-      ...joinSubs(tree(this.kids ?? new Map(), a.address), this.hooked?.get(a.address) ?? [])
+      ...joinSubs(tree(this.kids ?? new Map(), a.address), (this.hooked?.get(a.address) ?? []).filter((h) => sameApp(a.app, h.app)))
         .map((s) => subRow(s, t, { inset, listed: this.listed, parent: a, now })),
     ]);
   }
