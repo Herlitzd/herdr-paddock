@@ -27,6 +27,36 @@ export function byParent(all) {
   return kids;
 }
 
+// Sub-agents an agent runs inside itself (Claude Code's, Codex's, Pi's), which have no
+// terminal: its hooks put each on the agent's own terminal as a label
+// `paddock.sub.<app>.<id>` = {"app", "type", "at"}. Oldest first; a label that isn't
+// that shape is skipped.
+export function hookSubs(labels) {
+  const out = [];
+  for (const [k, v] of Object.entries(labels ?? {})) {
+    const m = /^paddock\.sub\.([a-z0-9-]+)\.(.+)$/.exec(k);
+    if (!m || !v) continue;
+    let d;
+    try { d = JSON.parse(v); } catch { continue; }
+    if (!d || typeof d !== "object") continue;
+    out.push({ id: m[2], app: typeof d.app === "string" ? d.app : m[1], type: typeof d.type === "string" ? d.type : "", at: Number.isFinite(d.at) ? d.at : 0 });
+  }
+  return out.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+}
+
+// One tree under an agent: its terminal sub-agents (tree()), then its hook sub-agents
+// (hookSubs()), with the lines redrawn so only the very last top-level row ends it.
+export function joinSubs(treeItems, hooks) {
+  const items = treeItems.map((s) => ({ ...s, lines: [...s.lines] }));
+  if (hooks.length) {
+    for (const s of items) {
+      if (s.lines[0] === "└") s.lines[0] = "├";
+      else if (s.lines.length > 1 && s.lines[0] === "") s.lines[0] = "│";
+    }
+  }
+  return [...items, ...hooks.map((h, i) => ({ hook: h, lines: [i === hooks.length - 1 ? "└" : "├"] }))];
+}
+
 // The sub-agents of `addr`, depth first, each with the tree lines before it.
 // `kids`: byParent's map. A terminal seen twice (a loop) isn't followed again.
 export function tree(kids, addr, lead = [], seen = new Set([addr])) {

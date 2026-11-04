@@ -7,7 +7,7 @@ import { h_flex } from "gpui-base";
 import { run } from "herdr";
 import { session } from "./session.js";
 import { duration, kidStatus } from "./agents-data.js";
-export { duration, kidStatus, tree, byParent } from "./agents-data.js";
+export { duration, kidStatus, tree, byParent, hookSubs, joinSubs } from "./agents-data.js";
 
 // What a row says: "Pi · Fix login redirect", or the program alone.
 export function label(a) {
@@ -48,16 +48,34 @@ export function agentRow(a, t, { inset = false, since = 0, now = Date.now() } = 
     .when(since > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - since))));
 }
 
-// A sub-agent's row under its parent's: tree lines, its light, what it runs. A click peeks at it.
-export function subRow({ k, lines }, t, { inset = false, listed }) {
-  const pic = icon(k.program, 12, t.muted);
-  return h_flex().id(`space-sub-${k.address}`).h(22).flex_none().pl(inset ? 51 : 33).pr(8).items_center().rounded(6)
-    .text_size(11.5).cursor_pointer().hover((st) => st.bg(t.hover))
-    .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+const treeLines = (lines, t) => lines.map((l) => div().self_start().mt(-4).w(9).h(15).mr(3).flex_none()
+  .when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input))
+  .when(l === "└" || l === "├", (el) => el.border_b(1.5).rounded_bl(5)));
+
+const subBox = (id, t, inset) => h_flex().id(id).h(22).flex_none().pl(inset ? 51 : 33).pr(8).items_center().rounded(6)
+  .text_size(11.5).cursor_pointer().hover((st) => st.bg(t.hover))
+  .on_mouse_down("left", (_e, cx) => cx.stop_propagation());
+
+// A sub-agent's row under its parent's: tree lines, its light, what it runs.
+// A terminal sub-agent (hc run) peeks open on a click; one an agent runs inside itself
+// (from its hooks) has no terminal, so a click goes to its parent.
+export function subRow(item, t, { inset = false, listed, parent, now = Date.now() }) {
+  const { lines } = item;
+  if (item.hook) {
+    const h = item.hook, pic = icon(parent?.program, 12, t.muted);
+    return subBox(`space-hook-${parent?.address}-${h.id}`, t, inset)
+      .tooltip(`${parent?.program?.name || h.app} subagent${h.type ? `: ${h.type}` : ""}`)
+      .on_click((_e, cx) => { cx.stop_propagation(); if (parent?.pane) run("pane.focus", { pane: parent.pane }); })
+      .children(treeLines(lines, t))
+      .child(div().mr(6).child(light("working", t, 7)))
+      .when(Boolean(pic), (el) => el.child(div().mr(6).child(pic)))
+      .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(h.type || "subagent"))
+      .when(h.at > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - h.at))));
+  }
+  const { k } = item, pic = icon(k.program, 12, t.muted);
+  return subBox(`space-sub-${k.address}`, t, inset)
     .on_click((_e, cx) => { cx.stop_propagation(); run("terminal.peek", { terminal: k.address }); })
-    .children(lines.map((l) => div().self_start().mt(-4).w(9).h(15).mr(3).flex_none()
-      .when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input))
-      .when(l === "└" || l === "├", (el) => el.border_b(1.5).rounded_bl(5))))
+    .children(treeLines(lines, t))
     .child(div().mr(6).child(light(kidStatus(k, listed), t, 7)))
     .when(Boolean(pic), (el) => el.child(div().mr(6).child(pic)))
     .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(k.name || k.template || k.program?.name || k.address));

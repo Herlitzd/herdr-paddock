@@ -10,7 +10,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, agents, terminals, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, readTextFile } from "herdr";
-import { agentRow, subRow, tree, byParent } from "./agents.js";
+import { agentRow, subRow, tree, byParent, hookSubs, joinSubs } from "./agents.js";
 import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders, placedOf, placeSpace, reorderProject, naturalProject, prunePlaced } from "./projects.js";
 import { Overlay, STORE, store, openMenu, openAdd, newSpaceIn } from "./overlay.js";
 
@@ -549,7 +549,10 @@ export default class Spaces extends View {
     const now = Date.now(), by = {}, list = agents();
     let dirty = false;
     // Live terminals by parent, for sub-agents.
-    this.kids = byParent(terminals());
+    const terms = terminals();
+    this.kids = byParent(terms);
+    // Sub-agents an agent runs inside itself, from the labels its hooks put on its terminal.
+    this.hooked = new Map(terms.map((k) => [k.address, hookSubs(k.labels)]).filter(([, h]) => h.length));
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     for (const a of list) {
       (by[a.space] ??= []).push(a);
@@ -586,10 +589,12 @@ export default class Spaces extends View {
     const list = this.byspace[w.id] ?? [];
     if (!list.length || this.shut.has(w.id)) return [];
     const now = Date.now();
-    // Each agent, then the sub-agents it started under it.
+    // Each agent, then its sub-agents under it: those it started as terminals (hc run),
+    // then those it runs inside itself (from its hooks).
     return list.flatMap((a) => [
       agentRow(a, t, { inset, since: this.changed[a.address]?.at ?? 0, now }),
-      ...tree(this.kids ?? new Map(), a.address).map((s) => subRow(s, t, { inset, listed: this.listed })),
+      ...joinSubs(tree(this.kids ?? new Map(), a.address), this.hooked?.get(a.address) ?? [])
+        .map((s) => subRow(s, t, { inset, listed: this.listed, parent: a, now })),
     ]);
   }
 

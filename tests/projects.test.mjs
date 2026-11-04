@@ -1,6 +1,6 @@
 // node tests/projects.test.mjs: the project list and grouping spaces into it.
 import { repoRoot, norm, inside, addProject, removeProject, editProject, taken, prunePlaced, reorderProject, placeSpace, placedOf, projectList, projectFor, groupRows, reposToAdd, urgent, fromSpaceFolders } from "../mods/paddock/projects.js";
-import { byParent, tree, kidStatus, duration } from "../mods/paddock/agents-data.js";
+import { byParent, tree, kidStatus, duration, hookSubs, joinSubs } from "../mods/paddock/agents-data.js";
 
 let bad = 0, count = 0;
 const check = (what, got, want) => {
@@ -142,6 +142,21 @@ check("sub-agent tree", tree(kidsOf, "t1").map((s) => [s.k.address, s.lines.join
 check("kid status", ["error", "done", "working"].map((st) => kidStatus({ address: "x", status: st }, new Map())), ["blocked", "idle", "working"]);
 check("kid status from agents()", kidStatus({ address: "x", status: "idle" }, new Map([["x", "blocked"]])), "blocked");
 check("durations", [0, 59999, 60000, 3599999, 3600000, 86400000 * 2].map(duration), ["<1m", "<1m", "1m", "59m", "1h", "2d"]);
+
+// Sub-agents an agent runs inside itself, from its hooks' labels.
+const labels = {
+  "herdr.space": "sp1",
+  "paddock.sub.claude.a2": '{"app":"claude","type":"Explore","at":200}',
+  "paddock.sub.claude.a1": '{"app":"claude","type":"general-purpose","at":100}',
+  "paddock.sub.codex.x": "not json",
+  "paddock.sub.claude.empty": "",
+};
+check("hook subs", hookSubs(labels).map((h) => [h.id, h.app, h.type, h.at]), [["a1", "claude", "general-purpose", 100], ["a2", "claude", "Explore", 200]]);
+check("hook subs, no labels", hookSubs(undefined), []);
+const treeOnly = tree(kidsOf, "t1");
+const joined = joinSubs(treeOnly, hookSubs(labels));
+check("joined lines", joined.map((s) => (s.k ? s.k.address : s.hook.id) + ":" + s.lines.join("")), ["t2:├", "t3:│└", "t5:├", "a1:├", "a2:└"]);
+check("joined, no hooks keeps the tree", joinSubs(treeOnly, []).map((s) => s.lines.join("")), ["├", "│└", "└"]);
 
 console.log(bad ? `${bad} of ${count} failed` : `all ${count} passed`);
 process.exit(bad ? 1 : 0);
