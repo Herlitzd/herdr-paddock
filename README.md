@@ -30,8 +30,8 @@ A mod for the [Herdr](https://herdr.dev) desktop app. It replaces the shipped
   does: Pi, Claude Code and Codex tested; OpenCode from its source) and the time in
   that state. A click goes to the agent. Sub-agents hang under their parent with
   tree lines: those started as terminals with `hc run` (a click peeks at one), and,
-  with the optional hooks below, those Claude Code and Codex run inside themselves
-  (their type and time; a click goes to the parent). The chevron before a space
+  with the optional hooks below, those Claude Code, Codex and Pi (pi-subagents) run
+  inside themselves (their type and time; a click goes to the parent). The chevron before a space
   folds its agents.
 - **Pin** (the pin on a space's row, on hover) keeps a space at the top of its project.
 - **One kind of tile** for every row: a project is a branch (a git repository) or a
@@ -72,12 +72,13 @@ By hand:
 
 To go back: `herdr-app do layout.switch '{"name":"main"}'`.
 
-## Sub-agents of Claude Code and Codex (optional)
+## Sub-agents of Claude Code, Codex and Pi (optional)
 
-Claude Code and Codex run their sub-agents inside themselves, so Herdr doesn't see
-them. Paddock shows them when their **hooks** tell it: on each sub-agent's start and
-end, a small script puts or removes a label on the agent's own Herdr terminal
-(`paddock.sub.<app>.<id>`), which Paddock reads. The sidebar works without them.
+Claude Code, Codex and Pi (with pi-subagents) run their sub-agents inside themselves,
+so Herdr doesn't see them. Paddock shows them when the agent tells it: on each
+sub-agent's start and end, a small script (Claude Code, Codex) or extension (Pi) puts
+or removes a label on the agent's own Herdr terminal (`paddock.sub.<app>.<id>`),
+which Paddock reads. The sidebar works without them.
 
 The hooks are registered **asynchronously**, so the agent never waits for them. The
 scripts print nothing and always exit 0, so they can't block or change what the
@@ -104,6 +105,16 @@ terminal, below). They run `hc` (and `jq` when it's there).
 5. Start a new session of the agent; sub-agents show from then on.
 
 To remove them, delete Paddock's groups (the last in each list) and nothing else.
+
+**Pi** uses an extension, `mods/paddock/hooks/pi.ts`, instead of hooks. It listens to
+pi-subagents' events for other extensions (`subagent:async-started`,
+`subagent:async-complete`, `subagent:process-terminal`) and to the `subagent` tool's
+progress for foreground runs, and asks pi-subagents' status (its in-process RPC) when a
+session starts, to keep only runs still going after `/reload`. It runs `hc label` and
+`hc get`, reads nothing else and uses no network. Inside a sub-agent (pi-subagents sets
+`PI_SUBAGENT_CHILD=1`) or outside Herdr it does nothing. To install it, add its absolute
+path to `"extensions"` in `~/.pi/agent/settings.json` (back the file up first, keep the
+other entries) and `/reload` or restart Pi; to remove it, take that entry out.
 
 **How each agent runs them**
 
@@ -146,8 +157,9 @@ the guess.
   tried (on Linux).
 - Projects live in this computer's Herdr, so another computer connected to the same
   machine has its own list.
-- The sub-agent hooks were run end to end on Windows with Claude Code and Codex; on
-  macOS and Linux only their script logic was tested here (with a stand-in `hc`).
+- The sub-agent hooks were run end to end on Windows with Claude Code, Codex and Pi
+  (pi-subagents 0.86); on macOS and Linux only the scripts' logic was tested here
+  (with a stand-in `hc`).
   For an agent on another machine, the hooks and the scripts must be installed on that
   machine, with its paths; that hasn't been tried.
 - A sub-agent whose end the hooks never see (the agent killed mid-run) shows until the

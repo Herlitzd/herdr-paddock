@@ -116,7 +116,9 @@ not named here is Herdr's shipped `spaces` mod as it is.
   run asynchronously, print nothing and always exit 0: they can't block or change the
   agent. Codex usually runs hooks from its shared background server, outside Herdr, so
   its hook finds the terminal by the thread's name in its title, else as the only live
-  Codex terminal in the session's folder, else does nothing.
+  Codex terminal in the session's folder, else does nothing. Pi's are from an extension
+  (pi-subagents' events and the `subagent` tool's progress); a run's leaves each get a
+  row, a workflow itself doesn't.
 - **Statuses** never change wording; a folded project or space shows its most urgent
   agent's (blocked > done > working > idle), from its spaces' own statuses or its
   agents'. Sub-agents don't count there.
@@ -165,6 +167,18 @@ not named here is Herdr's shipped `spaces` mod as it is.
     to plain characters, and run `hc label <terminal> <key>=<json>` / `<key>=`, `hc get
     <terminal> --json` (cleanup), and for Codex without `HC_TERMINAL_ID` `hc ls --json`,
     `hc get`, and `$CODEX_HOME/session_index.jsonl` (thread id -> name).
+  - `hooks/pi.ts` (a Pi extension, listed in `~/.pi/agent/settings.json`
+    `"extensions"`): does nothing when `PI_SUBAGENT_CHILD=1` or without
+    `HC_TERMINAL_ID`. `subagent:async-started` (skipping `mode: "workflow"`; one row per
+    `agents` entry) sets `paddock.sub.pi.<run id>[-<n>]` = `{"app":"pi","type",
+    "at","s","r"}` (`r`: `parentWorkflowRunId` or the run); `subagent:async-complete`
+    and `subagent:process-terminal` remove a run's rows and those whose `r` is it; the
+    `subagent` tool's `tool_execution_update` `details.progress[]` rows with `status:
+    "running"` are foreground rows until `tool_execution_end`. On `session_start` it
+    keeps only labels whose `r` the RPC `status` (`subagents:rpc:v1:request`, reply on
+    `subagents:rpc:v1:reply:<id>`) lists in `asyncSnapshot.runs` as running, queued or
+    paused; on `session_shutdown` with reason `quit` it removes them all. `hc` runs
+    with `execFile`, one `hc label` with every change at a time.
   - `hooks/claude.json`, `hooks/codex.json`: the config groups to append to
     `~/.claude/settings.json` (SubagentStart, SubagentStop, StopFailure, SessionStart,
     SessionEnd) and `~/.codex/hooks.json` (SubagentStart, SubagentStop, SessionStart;
@@ -206,6 +220,17 @@ not named here is Herdr's shipped `spaces` mod as it is.
 - Claude Code also sends SessionStart after compaction and `/clear`, and Codex after
   compaction and forks: clear only on `startup` or `resume`, or running background
   sub-agents vanish.
+- Pi awaits each `session_start` handler in turn, and pi-subagents' RPC answers
+  `no_active_session` until its own has run: don't await the RPC in `session_start`
+  (it would wait for itself); ask from a detached task, again each second.
+- pi-subagents' background sub-agents are Pi processes that load the same extensions
+  and inherit `HC_TERMINAL_ID`: without the `PI_SUBAGENT_CHILD` check, each would clear
+  its parent's rows on start.
+- `fleet` keys in pi-subagents' status are positions, renumbered as runs end: key rows
+  by run id instead.
+- To test slash commands in an agent, `hc send` won't do: it wraps the text as a note
+  (`<hc from=…>`). Type them with `hc keys`, and from Git Bash set
+  `MSYS_NO_PATHCONV=1`, which otherwise turns `/quit` into a path.
 
 - The mod's own name is written in two places: `mod: "paddock"` in `overlay.js` (its
   menus and dialogs open the mod by name) and `mods/paddock/icons/` in `main.js`.
@@ -249,5 +274,9 @@ not named here is Herdr's shipped `spaces` mod as it is.
 - With the hooks registered, a Claude Code or Codex sub-agent shows under its agent
   (its type and time) while it runs and goes when it ends; on Windows, Codex's too
   while started normally (with its background server).
+- With the Pi extension listed, a pi-subagents run in the background (each of a
+  parallel workflow's leaves) and in the foreground shows under Pi while it runs; it
+  stays through `/reload`, goes on quit, and a new Pi in the terminal clears what an
+  earlier one left.
 - Folding a space's agents with its chevron shows the most urgent state on its row.
 - Pinning a space moves it to the top of its project and keeps the pin shown.

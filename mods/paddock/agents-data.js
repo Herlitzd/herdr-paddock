@@ -27,7 +27,7 @@ export function byParent(all) {
   return kids;
 }
 
-// Sub-agents an agent runs inside itself (Claude Code's, Codex's), which have no
+// Sub-agents an agent runs inside itself (Claude Code's, Codex's, Pi's), which have no
 // terminal: its hooks put each on the agent's own terminal as a label
 // `paddock.sub.<app>.<id>` = {"app", "type", "at", "s"}. Oldest first; a label that
 // isn't that shape is skipped, and so is one older than 12 hours (its hooks never saw
