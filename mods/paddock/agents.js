@@ -41,9 +41,13 @@ export function agentRow(a, t, { inset = false, since = 0, now = Date.now() } = 
     .on_click((_e, cx) => { cx.stop_propagation(); run("pane.focus", { pane: a.pane }); })
     .child(light(a.status, t))
     .when(Boolean(pic), (el) => el.child(pic))
-    .child(div().flex_none().max_w(110).truncate().text_color(a.status === "idle" ? t.muted : t.foreground).child(name))
-    .when(Boolean(s), (el) => el.child(div().flex_none().text_color(t.dim).child("·"))
-      .child(div().min_w(0).flex_1().truncate().text_color(t.muted).child(s)))
+    // Local patch (no name): with an icon and a session title, the icon names the program
+    // (in the tooltip too) and the title takes the name's place.
+    .when(Boolean(pic) && Boolean(s), (el) => el.tooltip(name)
+      .child(div().min_w(0).flex_1().truncate().text_color(a.status === "idle" ? t.muted : t.foreground).child(s)))
+    .when(!(pic && s), (el) => el.child(div().flex_none().max_w(110).truncate().text_color(a.status === "idle" ? t.muted : t.foreground).child(name))
+      .when(Boolean(s), (el) => el.child(div().flex_none().text_color(t.dim).child("·"))
+        .child(div().min_w(0).flex_1().truncate().text_color(t.muted).child(s))))
     .when(!s, (el) => el.child(div().flex_1()))
     .when(since > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - since))));
 }

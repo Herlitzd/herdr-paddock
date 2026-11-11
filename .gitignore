@@ -2,3 +2,6 @@ gpui-kit.d.ts
 jsconfig.json
 *.error
 node_modules/
+# Written by Herdr Desktop for editor types
+mods/paddock/gpui-kit.d.ts
+mods/paddock/jsconfig.json

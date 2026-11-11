@@ -13,6 +13,7 @@ import { spaces, machines, panes, agents, terminals, run, openOverlay, exec, hc,
 import { agentRow, subRow, tree, byParent, hookSubs, joinSubs, sameApp } from "./agents.js";
 import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders, placedOf, placeSpace, reorderProject, naturalProject, prunePlaced } from "./projects.js";
 import { Overlay, STORE, store, openMenu, openAdd, newSpaceIn } from "./overlay.js";
+import { PR_SCRIPT, NO_PR, summarize, gitRow } from "./prs.js"; // Local patch (PRs)
 
 // A short stable id for an element from any string (a project's key).
 const hash = (s) => [...String(s)].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 2166136261).toString(36);
@@ -31,9 +32,13 @@ const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 // `ps`: panes(), read once by the caller (each read copies every pane).
+// Local patch (repoint): a terminal inside the space's folder wins, so moving the space's folder
+// and cd-ing a shell there moves it, though its agent can't leave the old folder.
 function place(s, ps) {
   const tabs = new Set((s.tabs ?? []).map((c) => c.id));
-  return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder;
+  const mine = ps.filter((p) => tabs.has(p.tab) && p.cwd);
+  const f = (s.folder ?? "").replace(/\/+$/, "");
+  return (f && mine.find((p) => p.cwd === f || p.cwd.startsWith(f + "/"))?.cwd) || mine[0]?.cwd || s.folder;
 }
 const rowHeight = ({ tree }) => (tree ? 28 : 30);
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
@@ -41,10 +46,30 @@ const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
 const FALLBACK = 60000;
+// Local patch (vs main): the branch against the remote's default branch: commits ahead,
+// behind or not, and lines changed since they split (uncommitted changes included).
+const VS_MAIN = `
+export GIT_OPTIONAL_LOCKS=0
+b=
+[ -n "$1" ] && git rev-parse -q --verify "origin/$1" >/dev/null && b=origin/$1
+[ -n "$b" ] || b=$(git symbolic-ref -q --short refs/remotes/origin/HEAD) || b=
+[ -n "$b" ] || for x in origin/main origin/master; do git rev-parse -q --verify "$x" >/dev/null && { b=$x; break; }; done
+[ -n "$b" ] || exit 3
+printf '%s\\n' "$b"
+git rev-list --left-right --count "$b...HEAD" || exit 1
+if [ -n "$2" ] && git cat-file -e "$2^{commit}" 2>/dev/null; then git rev-list --count "$2..HEAD"; else echo -; fi
+git -c core.fsmonitor=false diff --shortstat "$(git merge-base "$b" HEAD)" --
+`;
 
 // What a stored color name looks like on an avatar (the same in every mod
 // that draws space avatars): one strong color per hue, light and dark alike.
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
+// Local patch (color): draw the stored space colors (shared "space.colors": a name above or a #rrggbb).
+const PALETTE = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
+const spaceFill = (w) => {
+  const c = (shared("space.colors") ?? {})[w.id];
+  return !c ? null : c.startsWith("#") ? c.slice(0, 7) : MARK[c] ?? null;
+};
 
 // A space speaks up only when something in it needs you.
 export function glyph(status) {
@@ -87,6 +112,7 @@ export default class Spaces extends View {
     this.machines = [];
     this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
     this.closed = new Set(JSON.parse(localStorage.getItem("projects.folded") ?? "[]"));
+    this.idleOpen = new Set(JSON.parse(localStorage.getItem("projects.idleOpen") ?? "[]")); // Local patch (idle)
     // A space's agents show under it unless folded here; when each last changed state.
     this.shut = new Set(JSON.parse(localStorage.getItem("agents.folded") ?? "[]"));
     // Spaces pinned to the top of their project (of the loose spaces, out of one).
@@ -107,6 +133,108 @@ export default class Spaces extends View {
     // `git status` walks the whole tree, on another machine a process there:
     // only when its answer could have changed (see `due`).
     cx.timer.every(250, (cx) => this.checkNew(cx));
+    // Local patch (PRs): JSON [where(), branch] -> a PR summary, or null for none.
+    try { this.prs = JSON.parse(localStorage.getItem("prs") ?? "{}"); } catch { this.prs = {}; }
+    this.prAt = {};
+    cx.timer.every(3000, (cx) => { this.checkPrs(cx); this.fetchMains(cx); });
+  }
+
+  // Local patch (PRs): each space on a branch asks gh for its PR; an open one (or none yet)
+  // again every 2 minutes while the window is in front, a merged or closed one every 15.
+  checkPrs(cx) {
+    if (this.prBusy) return;
+    const ps = panes(), due = [], keep = {};
+    for (const w of spaces()) {
+      const key = where(w, ps), g = this.git[key];
+      if (!g?.branch || NO_PR.has(g.branch) || g.branch.startsWith("(")) continue;
+      const k = JSON.stringify([key, g.branch]);
+      keep[k] = true;
+      const pr = this.prs[k], age = Date.now() - (this.prAt[k] ?? 0);
+      const every = pr && pr.state !== "OPEN" ? 900000 : 120000;
+      if (!(k in this.prAt) || (window().active && age > every)) due.push([k, key]);
+    }
+    if (!due.length) return;
+    this.prBusy = true;
+    cx.spawn(async (cx) => {
+      for (const [k, key] of due) {
+        const [on, cwd] = JSON.parse(key);
+        this.prAt[k] = Date.now();
+        const r = await exec("sh", ["-c", PR_SCRIPT], { cwd, on }).catch(() => null);
+        if (r?.code === 0) {
+          try {
+            this.prs[k] = summarize(JSON.parse(r.stdout));
+            // Local patch (vs main): a new base to compare with.
+            const m = this.git[key]?.main;
+            if (m && ((this.prs[k].base && m.base !== `origin/${this.prs[k].base}`) || m.head !== this.prs[k].oid)) this.refreshGit([key], cx);
+          } catch {}
+        }
+        else if (r?.code === 3) this.prs[k] = null;
+        cx.notify();
+      }
+      // Forget a PR only once its place is known to be on another branch, or gone.
+      const places = new Set(spaces().map((w) => where(w, panes())));
+      for (const k of Object.keys(this.prs)) {
+        const [place, branch] = JSON.parse(k);
+        if (!keep[k] && (!places.has(place) || (place in this.git && this.git[place]?.branch !== branch))) delete this.prs[k];
+      }
+      localStorage.setItem("prs", JSON.stringify(this.prs));
+      this.prBusy = false;
+    });
+  }
+
+  // Local patch (vs main): each repo fetches its default branch every 10 minutes while the
+  // window is in front, so "behind" means behind GitHub; the repo watch then refreshes it.
+  fetchMains(cx) {
+    if (this.fetchBusy || !window().active) return;
+    this.fetchAt ??= {};
+    const seen = new Map();
+    for (const [key, g] of Object.entries(this.git)) if (g?.main && !seen.has(g.repo)) seen.set(g.repo, [key, g.main.base]);
+    const due = [...seen].filter(([repo]) => Date.now() - (this.fetchAt[repo] ?? 0) > 600000);
+    if (!due.length) return;
+    this.fetchBusy = true;
+    cx.spawn(async (cx) => {
+      for (const [repo, [key, base]] of due) {
+        this.fetchAt[repo] = Date.now();
+        const [on, cwd] = JSON.parse(key);
+        const [remote] = base.split("/");
+        await exec("sh", ["-c", 'export GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes"; timeout 30 git remote set-head "$1" --auto >/dev/null 2>&1; timeout 120 git fetch --quiet "$1"', "sh", remote], { cwd, on }).catch(() => null);
+        // Elsewhere than this computer nothing watches the repo: look again now.
+        this.refreshGit(Object.keys(this.git).filter((k) => this.git[k]?.repo === repo), cx);
+      }
+      this.fetchBusy = false;
+    });
+  }
+
+  prRows({ w, inset }, t) {
+    if (this.shut.has(w.id)) return [];
+    const key = where(w, this.ps ?? panes()), g = this.git[key];
+    const pr = g?.branch ? this.prs?.[JSON.stringify([key, g.branch])] ?? null : null;
+    // On the base branch itself (no main stats) and no PR: no row.
+    // No PR and nothing to say (no commits, changes or "behind"): no row either.
+    const m = g?.main;
+    const busy = m && (m.ahead || m.add || m.del || m.behind || g.dirty);
+    return pr || busy ? [gitRow(pr, g.main ?? null, g, w, t, { inset, onOpen: () => this.openPr(w, key, pr), onRefresh: (cx) => this.refreshPlace(key, cx) })] : [];
+  }
+
+  // Local patch (Redline): the PR in Redline's one-request view, in its own tab ("PR #n") in the
+  // space (shown first). Clicking again goes back to that tab.
+  openPr(w, key, pr) {
+    const [on, cwd] = JSON.parse(key);
+    const sp = spaces().find((s) => s.id === w.id);
+    if (!sp) return;
+    if (!sp.active) run("space.select", { id: sp.id });
+    const name = `PR #${pr.number}`;
+    const old = sp.tabs.find((x) => x.name === name && panes().some((p) => p.tab === x.id && p.mod === "redline"));
+    if (old) return run("tab.select", { id: old.id });
+    run("tab.new", { space: sp.id, name, mod: "redline",
+      props: { pr: { cwd, on, number: pr.number, title: pr.title, head: pr.head, base: pr.base, url: pr.url, draft: pr.draft } } });
+  }
+
+  // Local patch (refresh): the git row's ↻: this place's git and PR again, now.
+  refreshPlace(key, cx) {
+    for (const k of Object.keys(this.prAt)) if (JSON.parse(k)[0] === key) delete this.prAt[k];
+    this.refreshGit([key], cx);
+    cx.timer.after(1500, (cx) => this.checkPrs(cx));
   }
 
   checkNew(cx) {
@@ -230,6 +358,22 @@ export default class Spaces extends View {
           info.behind = Math.abs(parseInt(b, 10)) || 0;
         }
       }
+      // Local patch (vs main)
+      // Against the PR's base when it has one (a stacked PR's is another branch).
+      const prBase = info.branch ? this.prs?.[JSON.stringify([key, info.branch])]?.base ?? "" : "";
+      const prHead = info.branch ? this.prs?.[JSON.stringify([key, info.branch])]?.oid ?? "" : "";
+      const vs = await exec("sh", ["-c", VS_MAIN, "sh", prBase, prHead], { cwd, on }).catch(() => null);
+      // Uncommitted changes, untracked files included.
+      info.dirty = r.stdout.split("\n").filter((l) => l && !l.startsWith("#")).length;
+      if (vs?.code === 0) {
+        const [b, counts = "", unpushed = "-", stat = ""] = vs.stdout.split("\n");
+        const [behind, ahead] = counts.trim().split(/\s+/).map((n) => parseInt(n, 10) || 0);
+        if (info.branch !== b.replace(/^[^/]+\//, "")) info.main = {
+          base: b, behind, ahead, unpushed: unpushed.trim() === "-" ? null : parseInt(unpushed, 10) || 0, head: prHead,
+          add: parseInt(/(\d+) insertion/.exec(stat)?.[1] ?? "0", 10),
+          del: parseInt(/(\d+) deletion/.exec(stat)?.[1] ?? "0", 10),
+        };
+      }
       this.git[key] = info;
       if (!on) this.watch(repo, cx);
     } catch {
@@ -283,7 +427,7 @@ export default class Spaces extends View {
   grouped(t, collapsed) {
     const rows = this.ordered();
     // A space's row, then its agents' (as many elements as that takes).
-    const draw = (r) => (collapsed ? [this.compact(r, t)] : [this.row(r, t), ...this.agentRows(r, t)]);
+    const draw = (r) => (collapsed ? [this.compact(r, t)] : [this.row(r, t), ...this.prRows(r, t), ...this.agentRows(r, t)]);
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name)])].sort();
     const loading = m => {
       const layout = machines().find(k => k.name === m)?.layout;
@@ -345,13 +489,34 @@ export default class Spaces extends View {
     for (const r of loose) this.projectOf[r.i] = null;
     const inset = (r) => draw({ ...r, tree: null, inset: true });
     const pinned = (list) => [...list.filter((r) => this.pins.has(r.w.id)), ...list.filter((r) => !this.pins.has(r.w.id))];
+    const head = (p, n) => {
+      const key = `${machine ?? ""}:${p.id}`;
+      return [this.projectHead({ ...p, machine, key, n }, t, collapsed), ...(this.closed.has(key) ? [] : pinned(p.rows).flatMap(collapsed ? draw : inset))];
+    };
+    // Local patch (idle): projects with no space open go in a folded group at the bottom.
+    const numbered = projects.map((p, n) => [p, n]);
+    const idle = numbered.filter(([p]) => !p.rows.length);
+    const gkey = machine ?? "";
+    const open = this.idleOpen.has(gkey);
     return [
-      ...projects.flatMap((p, n) => {
-        const key = `${machine ?? ""}:${p.id}`;
-        return [this.projectHead({ ...p, machine, key, n }, t, collapsed), ...(this.closed.has(key) ? [] : pinned(p.rows).flatMap(collapsed ? draw : inset))];
-      }),
+      ...numbered.filter(([p]) => p.rows.length).flatMap(([p, n]) => head(p, n)),
       ...pinned(loose).flatMap((r) => draw({ ...r, tree: null, worktree: Boolean(r.g?.linked) })),
+      ...(idle.length && !collapsed ? [this.idleHead(gkey, idle.length, open, t)] : []),
+      ...(open && !collapsed ? idle.flatMap(([p, n]) => head(p, n)) : []),
     ];
+  }
+
+  idleHead(gkey, count, open, t) {
+    return h_flex().id(`idle-projects-${hash(gkey)}`).h(26).flex_none().px(8).gap(7).items_center().rounded(7)
+      .text_size(12).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.muted))
+      .on_click((_e, cx) => {
+        open ? this.idleOpen.delete(gkey) : this.idleOpen.add(gkey);
+        localStorage.setItem("projects.idleOpen", JSON.stringify([...this.idleOpen]));
+        cx.notify();
+      })
+      .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(11).flex_none().text_color(t.dim))
+      .child(div().flex_1().child("No spaces"))
+      .child(div().flex_none().child(String(count)));
   }
 
   // A project's tile: its color with a white mark, or plain; a branch for a repo, a folder otherwise.
@@ -368,8 +533,10 @@ export default class Spaces extends View {
 
   projectTile(p, t) {
     const repo = this.isRepo(p);
-    return h_flex().size(18).flex_none().rounded(5).items_center().justify_center().bg(t.raised)
-      .child(svg(`mods/workspace-chrome/${repo ? "git-branch" : "folder"}.svg`).size(12).text_color(t.muted));
+    // Local patch (color): a project gets a steady color from its key.
+    const fill = MARK[PALETTE[parseInt(hash(p.key), 36) % PALETTE.length]];
+    return h_flex().size(18).flex_none().rounded(5).items_center().justify_center().bg(fill)
+      .child(svg("mods/workspace-chrome/folder.svg").size(12).text_color("#ffffff")); // Local patch (icons): a folder for every project; the branch icon means a worktree
   }
 
   // A project's row, Orca's way round: chevron, tile, name, then what's inside when
@@ -446,6 +613,10 @@ export default class Spaces extends View {
     const branch = same(raw) || raw === "master" || raw === "main" ? "" : raw;
     const repo = tree || same(g.name) ? "" : g.name;
     const where = [repo, branch].filter(Boolean).join(" \u00b7 ");
+    // Local patch (vs main): the numbers are on the space's git row (prs.js); here only
+    // where it is, and no upstream arrows.
+    if (g.main) return h_flex().flex_1().min_w(0).justify_end().items_center().text_size(11.5).text_color(t.dim)
+      .when(Boolean(where), (el) => el.child(div().min_w(0).truncate().child(where)));
     return h_flex()
       .flex_1()
       .min_w(0)
@@ -461,6 +632,7 @@ export default class Spaces extends View {
 
   row({ w, i, g, tree, inset, worktree }, t) {
     const on = w.active;
+    const fill = spaceFill(w);
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
@@ -469,7 +641,9 @@ export default class Spaces extends View {
       .flex_none()
       .justify_center()
       .rounded(8)
-      .when(on, (el) => el.bg(t.selected))
+      // Local patch (color): the active space is tinted with its color and marked at the left.
+      .when(on, (el) => el.bg(fill ? `${fill}2e` : t.selected))
+      .when(on && Boolean(fill), (el) => el.child(div().absolute().left(0).top(7).bottom(7).w(3).rounded(2).bg(fill)))
       .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
       .when(this.pressed === i && this.over !== i, (el) => el.opacity(0.5))
       .when(this.pressed !== null && this.over === i && this.pressed !== i, (el) => el.child(
@@ -512,11 +686,11 @@ export default class Spaces extends View {
           .when(Boolean(inset), el => el.pl(18))
           .when(Boolean(tree), el => el.pl(22))
           .child(this.agentChevron(w, t))
-          .when(Boolean(tree), el => el.child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim)))
+          .when(Boolean(tree), el => el.child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(fill ?? t.dim)))
           // A space's tile, as a project's: a window split in panes (Lucide's panels-top-left),
           // or a branch for a worktree.
-          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(t.raised).items_center().justify_center()
-            .child(svg(worktree ? "mods/workspace-chrome/git-branch.svg" : "mods/paddock/icons/panels-top-left.svg").size(12).text_color(t.muted))))
+          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill ?? t.raised).items_center().justify_center()
+            .child(svg(worktree ? "mods/workspace-chrome/git-branch.svg" : "mods/paddock/icons/panels-top-left.svg").size(12).text_color(fill ? "#ffffff" : t.muted))))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
           .child(this.agentStatus(w, t))
@@ -556,6 +730,7 @@ export default class Spaces extends View {
     // the agent's next session start clears it.
     this.hooked = new Map(terms.map((k) => [k.address, hookSubs(k.labels, now)]).filter(([, h]) => h.length));
     this.listed = new Map(list.map((a) => [a.address, a.status]));
+    this.spaceOf = new Map(list.map((a) => [a.address, a.space])); // Local patch (own space)
     for (const a of list) {
       (by[a.space] ??= []).push(a);
       const s = a.status === "done" ? "idle" : a.status;
@@ -587,6 +762,17 @@ export default class Spaces extends View {
     if (s !== before) setShared(STORE, s);
   }
 
+  // Local patch (own space): sub-agents started into a space of their own (hc run from an agent)
+  // show there, as that space's agent, not again under the agent that started them.
+  kidsHere(space) {
+    const kids = this.kids ?? new Map(), at = this.spaceOf ?? new Map(), out = new Map();
+    for (const [p, list] of kids) {
+      const here = list.filter((k) => !at.has(k.address) || at.get(k.address) === space);
+      if (here.length) out.set(p, here);
+    }
+    return out;
+  }
+
   agentRows({ w, inset }, t) {
     const list = this.byspace[w.id] ?? [];
     if (!list.length || this.shut.has(w.id)) return [];
@@ -595,7 +781,7 @@ export default class Spaces extends View {
     // then those it runs inside itself (from its hooks).
     return list.flatMap((a) => [
       agentRow(a, t, { inset, since: this.changed[a.address]?.at ?? 0, now }),
-      ...joinSubs(tree(this.kids ?? new Map(), a.address), (this.hooked?.get(a.address) ?? []).filter((h) => sameApp(a.app, h.app)))
+      ...joinSubs(tree(this.kidsHere(w.id), a.address), (this.hooked?.get(a.address) ?? []).filter((h) => sameApp(a.app, h.app)))
         .map((s) => subRow(s, t, { inset, listed: this.listed, parent: a, now })),
     ]);
   }
@@ -648,6 +834,7 @@ export default class Spaces extends View {
   render(cx) {
     if (this.part) return this.part.render(cx);
     this.readAgents();
+    this.ps = panes(); // Local patch (PRs)
     const t = theme();
     const collapsed = narrow();
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
