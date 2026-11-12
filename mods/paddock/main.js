@@ -270,7 +270,8 @@ export default class Spaces extends View {
     cx.spawn(async (cx) => {
       for (const k of due) {
         const [on, cwd] = JSON.parse(k);
-        const r = await exec("sh", ["-c", 'ls -d "$HOME/.claude/projects/$1"/*.jsonl >/dev/null 2>&1', "sh", cwd.replace(/[^A-Za-z0-9]/g, "-")], { on }).catch(() => null);
+        // Only conversations from the claude CLI count: `--continue` skips SDK runs (Dispatch's intake).
+        const r = await exec("sh", ["-c", 'grep -qsF \'"entrypoint":"cli"\' "$HOME/.claude/projects/$1"/*.jsonl', "sh", cwd.replace(/[^A-Za-z0-9]/g, "-")], { on }).catch(() => null);
         this.convo[k] = { v: r?.code === 0, at: Date.now() };
       }
       this.convoBusy = false;
