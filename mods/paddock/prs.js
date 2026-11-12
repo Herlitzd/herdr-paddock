@@ -50,6 +50,8 @@ const GREEN = "#3fae6a", PURPLE = "#8b7cf6", RED = "#d9649a", ORANGE = "#e3814f"
 const pill = (text, color) => div().flex_none().px(4).rounded(4).text_size(11).bg(`${color.slice(0, 7)}33`).text_color(color).child(text);
 
 export function gitRow(pr, m, g, w, t, { inset = false, onOpen, onRefresh }) {
+  // Once merged, the branch's own numbers (behind, lines changed, commits ahead) are only noise.
+  if (pr?.state === "MERGED") m = null;
   const done = pr && (pr.state === "MERGED" || pr.state === "CLOSED");
   const color = !pr ? t.dim : pr.state === "MERGED" ? PURPLE : pr.state === "CLOSED" ? RED : pr.draft ? t.dim : GREEN;
   const lightOf = !pr || done ? null : pr.checks === "fail" ? "blocked" : pr.checks === "pending" ? "working" : pr.checks === "pass" ? "done" : "idle";
