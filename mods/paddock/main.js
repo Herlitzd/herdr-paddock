@@ -673,6 +673,7 @@ export default class Spaces extends View {
   // Only what's unusual, after the name: "herdr \u00b7 spike \u21912 \u21931". The repo or
   // branch goes when the name already says it (a worktree is named after its branch),
   // and master/main go: nearly every space is on one.
+  // Local patch (no repo twice): inside a project (`inset`) the project row already names the repo.
   gitTail(g, tree, name, t) {
     const raw = g.branch ?? "detached";
     const same = (a) => a.toLowerCase() === name.toLowerCase();
@@ -758,7 +759,7 @@ export default class Spaces extends View {
           .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill ?? t.raised).items_center().justify_center()
             .child(svg(worktree ? "mods/workspace-chrome/git-branch.svg" : "mods/paddock/icons/panels-top-left.svg").size(12).text_color(fill ? "#ffffff" : t.muted))))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
-          .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
+          .child(g ? this.gitTail(g, tree || inset, w.name, t) : div().flex_1())
           .child(this.agentStatus(w, t))
           .child(this.pinButton(w, t)),
       );
