@@ -237,6 +237,71 @@ export default class Spaces extends View {
     cx.timer.after(1500, (cx) => this.checkPrs(cx));
   }
 
+  // Local patch (resume): after a reboot Herdr gives each terminal a plain shell again and never
+  // reruns its program. A space with no agent left whose shell is in a folder Claude has
+  // conversations for gets a "Resume Claude" row: `claude --continue` there, the folder's latest.
+  resumable(w) {
+    if ((this.byspace[w.id] ?? []).length) return null;
+    const tabs = (w.tabs ?? []).map((x) => x.id), ps = this.ps ?? panes();
+    for (const tab of tabs) for (const p of ps) {
+      if (p.tab !== tab || !p.terminal || !p.program?.shell || !p.cwd) continue;
+      if (this.convo?.[JSON.stringify([w.machine ?? null, p.cwd])]?.v) return p;
+    }
+    return null;
+  }
+
+  // Called from render (throttled): JSON [machine, folder] -> { v: has Claude conversations, at }.
+  checkConvos(cx) {
+    this.convo ??= {};
+    if (this.convoBusy || Date.now() - (this.convoLook ?? 0) < 3000) return;
+    this.convoLook = Date.now();
+    const ps = panes(), due = new Set();
+    for (const w of spaces()) {
+      if ((this.byspace[w.id] ?? []).length) continue;
+      const tabs = new Set((w.tabs ?? []).map((x) => x.id));
+      for (const p of ps) {
+        if (!tabs.has(p.tab) || !p.terminal || !p.program?.shell || !p.cwd) continue;
+        const k = JSON.stringify([w.machine ?? null, p.cwd]);
+        if (Date.now() - (this.convo[k]?.at ?? 0) > 300000) due.add(k);
+      }
+    }
+    if (!due.size) return;
+    this.convoBusy = true;
+    cx.spawn(async (cx) => {
+      for (const k of due) {
+        const [on, cwd] = JSON.parse(k);
+        const r = await exec("sh", ["-c", 'ls -d "$HOME/.claude/projects/$1"/*.jsonl >/dev/null 2>&1', "sh", cwd.replace(/[^A-Za-z0-9]/g, "-")], { on }).catch(() => null);
+        this.convo[k] = { v: r?.code === 0, at: Date.now() };
+      }
+      this.convoBusy = false;
+      cx.notify();
+    });
+  }
+
+  resumeRows({ w, inset }, t) {
+    const p = this.resumable(w);
+    if (!p) return [];
+    const busy = this.resuming === p.terminal;
+    return [h_flex().id(`space-resume-${w.id}`).h(24).flex_none().pl(inset ? 51 : 33).pr(8).gap(7).items_center().rounded(6)
+      .text_size(12).text_color(t.muted).cursor_pointer().hover((st) => st.bg(t.hover).text_color(t.foreground))
+      .tooltip(`claude --continue in ${p.cwd}`)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        if (busy) return;
+        this.resuming = p.terminal;
+        cx.notify();
+        if (!w.active) run("space.select", { id: w.id });
+        run("pane.focus", { pane: p.pane });
+        cx.spawn(async (cx) => {
+          await hc(["send", p.terminal, "claude --continue"]).catch(() => null);
+          cx.timer.after(4000, (cx) => { this.resuming = null; cx.notify(); });
+        });
+      })
+      .child(svg("mods/paddock/icons/refresh.svg").size(12).flex_none())
+      .child(div().min_w(0).flex_1().truncate().child(busy ? "Resuming…" : "Resume Claude"))];
+  }
+
   checkNew(cx) {
     const now = Date.now();
     const sp = spaces();
@@ -427,7 +492,7 @@ export default class Spaces extends View {
   grouped(t, collapsed) {
     const rows = this.ordered();
     // A space's row, then its agents' (as many elements as that takes).
-    const draw = (r) => (collapsed ? [this.compact(r, t)] : [this.row(r, t), ...this.prRows(r, t), ...this.agentRows(r, t)]);
+    const draw = (r) => (collapsed ? [this.compact(r, t)] : [this.row(r, t), ...this.prRows(r, t), ...this.agentRows(r, t), ...this.resumeRows(r, t)]);
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name)])].sort();
     const loading = m => {
       const layout = machines().find(k => k.name === m)?.layout;
@@ -835,6 +900,7 @@ export default class Spaces extends View {
     if (this.part) return this.part.render(cx);
     this.readAgents();
     this.ps = panes(); // Local patch (PRs)
+    this.checkConvos(cx); // Local patch (resume)
     const t = theme();
     const collapsed = narrow();
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
