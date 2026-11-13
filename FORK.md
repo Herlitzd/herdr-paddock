@@ -18,6 +18,7 @@ run in Herdr Desktop on Windows with herdr-core in WSL. Changes are marked in th
 | idle | projects with no spaces fold into a "No spaces" group at the bottom |
 | no name | an agent row with an icon and a session title shows only the title |
 | no repo twice | a space inside a project doesn't repeat the repo name, only its branch |
+| general | a space in a home folder's `general/<task>` adds a "General" project for `~/general` (once; removing it keeps it removed). For task folders that aren't repos |
 | resume | after a reboot Herdr gives terminals a plain shell; a space with no agent whose shell is in a folder with Claude CLI conversations gets a "Resume Claude" row (`claude --continue`) |
 
 ## Install (Windows + WSL)

@@ -41,6 +41,8 @@ function place(s, ps) {
   return (f && mine.find((p) => p.cwd === f || p.cwd.startsWith(f + "/"))?.cwd) || mine[0]?.cwd || s.folder;
 }
 const rowHeight = ({ tree }) => (tree ? 28 : 30);
+// Local patch (general): a home folder's general/<task> (Linux, macOS, root).
+const GENERAL = /^((?:\/home\/[^/]+|\/Users\/[^/]+|\/root)\/general)\/[^/]+/;
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
@@ -544,10 +546,13 @@ export default class Spaces extends View {
     let s = store();
     // Written only when a repo was found, never on a plain render.
     const repos = reposToAdd(s, machine, placed);
-    if (repos.length) {
-      for (const f of repos) s = addProject(s, machine, f.root, { name: f.name, auto: true });
-      setShared(STORE, s);
-    }
+    // Local patch (general): Dispatch's general tasks (no repo) each get a folder under ~/general; a space in
+    // one adds a "General" project for ~/general, once (removing it keeps it removed, as with a repo).
+    const general = new Set(placed.map((r) => GENERAL.exec(r.place ?? "")?.[1]).filter(Boolean));
+    for (const root of general) repos.push({ root, name: "General" });
+    const before = s;
+    for (const f of repos) s = addProject(s, machine, f.root, { name: f.name, auto: true });
+    if (s !== before) setShared(STORE, s);
     const list = projectList(s, machine);
     const { projects, loose } = groupRows(list, placed, placedOf(s, machine));
     for (const r of placed) this.naturalOf[r.i] = naturalProject(list, r)?.id ?? null;
