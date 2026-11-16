@@ -9,7 +9,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, agents, terminals, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, readTextFile } from "herdr";
+import { spaces, machines, panes, agents, terminals, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, props, home, appHome, readTextFile } from "herdr";
 import { agentRow, subRow, tree, byParent, hookSubs, joinSubs, sameApp } from "./agents.js";
 import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders, placedOf, placeSpace, reorderProject, naturalProject, prunePlaced } from "./projects.js";
 import { Overlay, STORE, store, openMenu, openAdd, newSpaceIn } from "./overlay.js";
@@ -215,7 +215,7 @@ export default class Spaces extends View {
     // No PR and nothing to say (no commits, changes or "behind"): no row either.
     const m = g?.main;
     const busy = m && (m.ahead || m.add || m.del || m.behind || g.dirty);
-    return pr || busy ? [gitRow(pr, g.main ?? null, g, w, t, { inset, onOpen: () => this.openPr(w, key, pr), onRefresh: (cx) => this.refreshPlace(key, cx) })] : [];
+    return pr || busy ? [gitRow(pr, g.main ?? null, g, w, t, { inset, onOpen: () => this.openPr(w, key, pr), onWalk: this.walkthrough() ? () => this.walkPr(w, key, pr) : null, onRefresh: (cx) => this.refreshPlace(key, cx) })] : [];
   }
 
   // Local patch (Redline): the PR in Redline's one-request view, in its own tab ("PR #n") in the
@@ -230,6 +230,21 @@ export default class Spaces extends View {
     if (old) return run("tab.select", { id: old.id });
     run("tab.new", { space: sp.id, name, mod: "redline",
       props: { pr: { cwd, on, number: pr.number, title: pr.title, head: pr.head, base: pr.base, url: pr.url, draft: pr.draft } } });
+  }
+
+  // Local patch (walkthrough): the PR in the walkthrough mod (a dialog), read on the space's machine.
+  // Only when that mod is installed: its mod.json says it can be opened as a dialog.
+  walkthrough() {
+    if (this.hasWalk === undefined) {
+      this.hasWalk = null;
+      readTextFile(`${appHome()}/mods/walkthrough/mod.json`).then((s) => { this.hasWalk = Boolean(s); }, () => { this.hasWalk = false; });
+    }
+    return this.hasWalk;
+  }
+
+  walkPr(w, key, pr) {
+    const [on, cwd] = JSON.parse(key);
+    openOverlay({ mod: "walkthrough", kind: "dialog", modal: true, width: 0.74, height: 0.8, props: { folder: cwd, on, scope: "pr", pr: pr.number } });
   }
 
   // Local patch (refresh): the git row's ↻: this place's git and PR again, now.

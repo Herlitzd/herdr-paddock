@@ -49,7 +49,7 @@ const GREEN = "#3fae6a", PURPLE = "#8b7cf6", RED = "#d9649a", ORANGE = "#e3814f"
 // A status word in a tinted box of its color.
 const pill = (text, color) => div().flex_none().px(4).rounded(4).text_size(11).bg(`${color.slice(0, 7)}33`).text_color(color).child(text);
 
-export function gitRow(pr, m, g, w, t, { inset = false, onOpen, onRefresh }) {
+export function gitRow(pr, m, g, w, t, { inset = false, onOpen, onRefresh, onWalk }) {
   // Once merged, the branch's own numbers (behind, lines changed, commits ahead) are only noise.
   if (pr?.state === "MERGED") m = null;
   const done = pr && (pr.state === "MERGED" || pr.state === "CLOSED");
@@ -90,6 +90,12 @@ export function gitRow(pr, m, g, w, t, { inset = false, onOpen, onRefresh }) {
     .when(counts && m.ahead > 0, (el) => el.child(div().flex_none().text_color(t.muted).child(`\u2191${m.ahead}`)))
     .child(div().flex_1())
     .when(Boolean(word), (el) => el.child(pill(word[0], word[1])))
+    // Local patch (walkthrough): an open PR read step by step in the walkthrough mod, when it's installed.
+    .when(Boolean(pr) && !done && Boolean(onWalk), (el) => el.child(div().id(`space-git-walk-${w.id}`).flex_none().p(2).rounded(4).cursor_pointer()
+      .text_color(t.dim).hover((st) => st.bg(t.hover).text_color(t.foreground)).tooltip("Walk through this PR, step by step")
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => { cx.stop_propagation(); onWalk(cx); })
+      .child(svg("mods/paddock/icons/book-open.svg").size(11))))
     .when(Boolean(onRefresh), (el) => el.child(div().id(`space-git-refresh-${w.id}`).flex_none().p(2).rounded(4).cursor_pointer()
       .text_color(t.dim).hover((st) => st.bg(t.hover).text_color(t.foreground)).tooltip("Check git and the PR again")
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
