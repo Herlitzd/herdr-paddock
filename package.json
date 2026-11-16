@@ -2,5 +2,5 @@
   "name": "herdr-paddock",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node tests/projects.test.mjs" }
+  "scripts": { "test": "node tests/projects.test.mjs && node tests/tabnames.test.mjs" }
 }

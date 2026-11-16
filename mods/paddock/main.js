@@ -14,6 +14,7 @@ import { agentRow, subRow, tree, byParent, hookSubs, joinSubs, sameApp } from ".
 import { groupRows, reposToAdd, projectList, addProject, urgent, fromSpaceFolders, placedOf, placeSpace, reorderProject, naturalProject, prunePlaced } from "./projects.js";
 import { Overlay, STORE, store, openMenu, openAdd, newSpaceIn } from "./overlay.js";
 import { PR_SCRIPT, NO_PR, summarize, gitRow } from "./prs.js"; // Local patch (PRs)
+import { TAB_NAMES, tabNames } from "./tabnames.js"; // Local patch (tab names)
 
 // A short stable id for an element from any string (a project's key).
 const hash = (s) => [...String(s)].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 2166136261).toString(36);
@@ -252,6 +253,20 @@ export default class Spaces extends View {
     const old = sp.tabs.find((x) => x.name === name && panes().some((p) => p.tab === x.id && p.mod === "walkthrough"));
     if (old) return run("tab.select", { id: old.id });
     run("tab.new", { space: sp.id, name, mod: "walkthrough", props: { folder: cwd, on, scope: "pr", pr: pr.number } });
+  }
+
+  // Local patch (tab names): unnamed tabs take their agent's session title (tabnames.js).
+  // A rename is sent once per name; the app may apply it after this render.
+  nameTabs() {
+    const saved = shared(TAB_NAMES) ?? {};
+    const { owners, renames } = tabNames(spaces(), this.ps, saved);
+    this.sentNames ??= {};
+    for (const r of renames) {
+      if (this.sentNames[r.id] === r.name) continue;
+      this.sentNames[r.id] = r.name;
+      try { run("tab.rename", { id: r.id, name: r.name }); } catch {}
+    }
+    if (JSON.stringify(owners) !== JSON.stringify(saved)) setShared(TAB_NAMES, owners);
   }
 
   // Local patch (refresh): the git row's ↻: this place's git and PR again, now.
@@ -930,6 +945,7 @@ export default class Spaces extends View {
     this.readAgents();
     this.ps = panes(); // Local patch (PRs)
     this.checkConvos(cx); // Local patch (resume)
+    this.nameTabs(); // Local patch (tab names)
     const t = theme();
     const collapsed = narrow();
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
