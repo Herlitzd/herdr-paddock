@@ -17,6 +17,7 @@ run in Herdr Desktop on Windows with herdr-core in WSL. Changes are marked in th
 | repoint | a space's place is the terminal inside its folder, so moving a space's folder and cd-ing a shell there moves it |
 | own space | a sub-agent started into a space of its own shows there, not again under the agent that started it |
 | no this computer | "This computer" gets no header unless one of its spaces exists (here everything runs on the WSL machine) |
+| put away | a space whose tabs are all settled (out of the lists, still running) isn't listed; whatever made it opens it |
 | idle | projects with no spaces fold into a "No spaces" group at the bottom |
 | no name | an agent row with an icon and a session title shows only the title |
 | full title | hovering an agent or sub-agent row shows its whole session title (the row cuts it off) and the program |
