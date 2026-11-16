@@ -232,8 +232,9 @@ export default class Spaces extends View {
       props: { pr: { cwd, on, number: pr.number, title: pr.title, head: pr.head, base: pr.base, url: pr.url, draft: pr.draft } } });
   }
 
-  // Local patch (walkthrough): the PR in the walkthrough mod (a dialog), read on the space's machine.
-  // Only when that mod is installed: its mod.json says it can be opened as a dialog.
+  // Local patch (walkthrough): the PR in the walkthrough mod, in its own tab ("Walk #n") in the
+  // space, read on the space's machine. Clicking again goes back to that tab.
+  // Only when that mod is installed.
   walkthrough() {
     if (this.hasWalk === undefined) {
       this.hasWalk = null;
@@ -244,7 +245,13 @@ export default class Spaces extends View {
 
   walkPr(w, key, pr) {
     const [on, cwd] = JSON.parse(key);
-    openOverlay({ mod: "walkthrough", kind: "dialog", modal: true, width: 0.74, height: 0.8, props: { folder: cwd, on, scope: "pr", pr: pr.number } });
+    const sp = spaces().find((s) => s.id === w.id);
+    if (!sp) return;
+    if (!sp.active) run("space.select", { id: sp.id });
+    const name = `Walk #${pr.number}`;
+    const old = sp.tabs.find((x) => x.name === name && panes().some((p) => p.tab === x.id && p.mod === "walkthrough"));
+    if (old) return run("tab.select", { id: old.id });
+    run("tab.new", { space: sp.id, name, mod: "walkthrough", props: { folder: cwd, on, scope: "pr", pr: pr.number } });
   }
 
   // Local patch (refresh): the git row's ↻: this place's git and PR again, now.

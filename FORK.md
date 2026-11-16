@@ -12,7 +12,7 @@ run in Herdr Desktop on Windows with herdr-core in WSL. Changes are marked in th
 | icons | GitHub and refresh icons in `icons/` |
 | vs main / PRs (`prs.js`) | a git row under each space: its PR (number, checks light, merged/closed/approved/draft pill), all-pushed or unpushed, behind, +/- lines and commits ahead against the default branch. A merged PR shows only its pill. Base branches are fetched every 10 minutes while the window is in front |
 | refresh | a refresh button on the git row: git and the PR checked again now |
-| walkthrough | with the [walkthrough](https://github.com/dmazlum/herdr-walkthrough) mod installed, an open PR's git row gets a 📖 button: that PR in the walkthrough dialog (`props: {folder, on, scope: "pr", pr}`; `on` and `pr` need a walkthrough patched to take them) |
+| walkthrough | with the [walkthrough](https://github.com/dmazlum/herdr-walkthrough) mod installed, an open PR's git row gets a 📖 button: that PR in the walkthrough, in a "Walk #n" tab in the space (clicking again goes back to it) (`props: {folder, on, scope: "pr", pr}`; `on` and `pr` need a walkthrough patched to take them) |
 | Redline | clicking the PR row opens the PR in a `PR #n` tab with the Redline mod's single-PR view (`props.pr`); clicking again goes back to that tab |
 | repoint | a space's place is the terminal inside its folder, so moving a space's folder and cd-ing a shell there moves it |
 | own space | a sub-agent started into a space of its own shows there, not again under the agent that started it |
