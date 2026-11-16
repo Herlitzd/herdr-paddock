@@ -6,6 +6,7 @@ import { div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { run } from "herdr";
 import { session } from "./session.js";
+import { openAgentMenu } from "./overlay.js";
 import { duration, kidStatus } from "./agents-data.js";
 export { duration, kidStatus, tree, byParent, hookSubs, joinSubs, sameApp } from "./agents-data.js";
 
@@ -39,6 +40,8 @@ export function agentRow(a, t, { inset = false, since = 0, now = Date.now() } = 
     .when(!a.focused, (el) => el.hover((st) => st.bg(t.hover)))
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
     .on_click((_e, cx) => { cx.stop_propagation(); run("pane.focus", { pane: a.pane }); })
+    // Local patch (agent menu): right-click for Copy agent id and friends (overlay.js).
+    .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openAgentMenu(a.address, s); })
     .child(light(a.status, t))
     .when(Boolean(pic), (el) => el.child(pic))
     // Local patch (no name): with an icon and a session title, the icon names the program
@@ -83,6 +86,7 @@ export function subRow(item, t, { inset = false, listed, parent, now = Date.now(
   return subBox(`space-sub-${k.address}`, t, inset)
     .tooltip(ks && ks !== kName ? `${kName}\n${ks}` : kName)
     .on_click((_e, cx) => { cx.stop_propagation(); run("terminal.peek", { terminal: k.address }); })
+    .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openAgentMenu(k.address, ks); })
     .children(treeLines(lines, t))
     .child(div().mr(6).child(light(kidStatus(k, listed), t, 7)))
     .when(Boolean(pic), (el) => el.child(div().mr(6).child(pic)))

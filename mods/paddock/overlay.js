@@ -1,6 +1,8 @@
 // The sidebar's own popups, opened as overlays of this mod (props.role):
 //   "project-menu"  a project's right-click menu: New space here, Edit project…,
 //                   Remove project
+//   "agent-menu"    an agent's right-click menu (local patch): Copy agent id (its
+//                   terminal's address, as hc takes it), Copy title
 //   "edit"          a project's name and folder
 //   "add"           a new project: its name and folder (Choose… opens the system's
 //                   folder picker on this computer; another machine's is typed)
@@ -35,7 +37,7 @@ export class Overlay {
     this.at = 0;
     this.error = null;
     this.handle = cx.focus_handle();
-    if (p.role === "project-menu") { this.handle.focus(); return; }
+    if (p.role === "project-menu" || p.role === "agent-menu") { this.handle.focus(); return; }
     const was = p.role === "edit" ? project(p.machine, p.id) : null;
     const field = (value, placeholder) => {
       const input = InputState.new({ value, placeholder });
@@ -55,7 +57,11 @@ export class Overlay {
   }
 
   items() {
-    const { machine, id } = props();
+    const { machine, id, role, address, title } = props();
+    if (role === "agent-menu") return [
+      { label: "Copy agent id", icon: "mods/paddock/icons/copy.svg", run: (cx) => cx.write_to_clipboard(address) },
+      ...(title ? [{ label: "Copy title", icon: "mods/paddock/icons/copy.svg", run: (cx) => cx.write_to_clipboard(title) }] : []),
+    ];
     return [
       { label: "New space here", icon: "plus", run: () => { const p = project(machine, id); if (p) newSpaceIn(p, machine); } },
       { label: "Edit project…", icon: "square-pen", run: () => openEdit(machine, id) },
@@ -63,11 +69,11 @@ export class Overlay {
     ];
   }
 
-  choose(i) {
+  choose(i, cx) {
     const it = this.items()[i];
     if (!it) return;
     closeOverlay(props().overlay);
-    it.run();
+    it.run(cx);
   }
 
   pick(cx) {
@@ -103,7 +109,7 @@ export class Overlay {
       .on_key_down((e, cx) => {
         if (e.key === "down") this.at = (this.at + 1) % list.length;
         else if (e.key === "up") this.at = (this.at + list.length - 1) % list.length;
-        else if (e.key === "enter") this.choose(this.at);
+        else if (e.key === "enter") this.choose(this.at, cx);
         else if (e.key === "escape") closeOverlay(p.overlay);
         else return;
         cx.notify();
@@ -112,14 +118,14 @@ export class Overlay {
         .when(Boolean(it.line), (el) => el.child(div().mx(7).my(4).h(1).bg(t.border)))
         .child(h_flex().id(`pm-${i}`).h(31).px(8).gap(9).rounded(7).items_center().text_color(t.foreground)
           .when(i === this.at, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover))
-          .on_click(() => this.choose(i))
-          .child(svg(`mods/workspace-chrome/${it.icon}.svg`).size(14).flex_none().text_color(t.muted))
+          .on_click((_e, cx) => this.choose(i, cx))
+          .child(svg(it.icon.includes("/") ? it.icon : `mods/workspace-chrome/${it.icon}.svg`).size(14).flex_none().text_color(t.muted))
           .child(div().flex_1().child(it.label)))));
   }
 
   render() {
     const t = theme(), p = props();
-    if (p.role === "project-menu") return this.menuView(t, p);
+    if (p.role === "project-menu" || p.role === "agent-menu") return this.menuView(t, p);
     const edit = p.role === "edit";
     const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).flex_none().items_center().rounded(8)
       .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
@@ -151,5 +157,7 @@ export class Overlay {
 
 const open = (p, how) => openOverlay({ mod: "paddock", ...how, props: p });
 export const openMenu = (machine, id) => open({ role: "project-menu", machine, id }, { kind: "popup", width: 200, height: 112 });
+// Local patch (agent menu): sized for its one or two items.
+export const openAgentMenu = (address, title) => open({ role: "agent-menu", address, title }, { kind: "popup", width: 200, height: title ? 72 : 41 });
 export const openEdit = (machine, id) => open({ role: "edit", machine, id }, { kind: "dialog", width: 460, height: 300 });
 export const openAdd = (machine) => open({ role: "add", machine }, { kind: "dialog", width: 460, height: 300 });

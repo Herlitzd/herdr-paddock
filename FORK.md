@@ -22,6 +22,7 @@ run in Herdr Desktop on Windows with herdr-core in WSL. Changes are marked in th
 | idle | projects with no spaces fold into a "No spaces" group at the bottom |
 | no name | an agent row with an icon and a session title shows only the title |
 | full title | hovering an agent or sub-agent row shows its whole session title (the row cuts it off) and the program |
+| agent menu | right-click an agent or terminal sub-agent row for a menu (`overlay.js`, role `agent-menu`): Copy agent id (its terminal address, e.g. `t52`, as `hc` takes it) and Copy title. Copy icon in `icons/` |
 | tab names | a tab nobody named takes its agent's session title and follows it (`tabnames.js`, ideas from [kaishin/herdr-renamer-mod](https://github.com/kaishin/herdr-renamer-mod)). A tab named by hand (F2) or by a mod (`PR #n`, `Walk #n`) is never touched; renaming one by hand stops it following. One agent per tab, kept while it's there |
 | no repo twice | a space inside a project doesn't repeat the repo name, only its branch |
 | general | a space in a home folder's `general/<task>` adds a "General" project for `~/general` (once; removing it keeps it removed). For task folders that aren't repos |
