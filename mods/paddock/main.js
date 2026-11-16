@@ -514,7 +514,10 @@ export default class Spaces extends View {
     for (const w of sp) if (!this.shown.has(w.id) && ready(w)) this.shown.add(w.id);
     // Local patch (put away): a space whose tabs are all settled (out of the lists, still running) is put away
     // too and isn't listed; something else opens it when it's wanted.
-    const away = (w) => (w.tabs ?? []).length > 0 && w.tabs.every((t) => t.settled);
+    // Local patch (hidden): spaces whose ids are in shared("paddock.hidden") aren't listed either: another mod
+    // that keeps a space for itself (and opens it its own way) puts its id there.
+    const hidden = new Set(shared("paddock.hidden") ?? []);
+    const away = (w) => hidden.has(w.id) || ((w.tabs ?? []).length > 0 && w.tabs.every((t) => t.settled));
     const list = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null })).filter((r) => this.shown.has(r.w.id) && !away(r.w));
     const mains = new Set(list.filter((r) => r.g && !r.g.linked).map((r) => r.g.repo));
     const nested = (r) => r.g?.linked && mains.has(r.g.repo);
