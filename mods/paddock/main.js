@@ -541,7 +541,9 @@ export default class Spaces extends View {
     };
     const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
     if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : this.section(rows, draw, t, collapsed, null);
-    const machineNames = [null, ...remote];
+    // Local patch (no this computer): this computer gets no header unless something runs on it; here every
+    // space is on a connected machine (WSL), and an empty "This computer" group was only in the way.
+    const machineNames = [...(rows.some((r) => !r.w.machine) ? [null] : []), ...remote];
     return machineNames.flatMap((m) => {
       const mine = rows.filter((r) => (r.w.machine ?? null) === m);
       const machine = this.machines.find(k => k.name === m);
