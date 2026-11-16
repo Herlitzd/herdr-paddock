@@ -17,6 +17,7 @@ run in Herdr Desktop on Windows with herdr-core in WSL. Changes are marked in th
 | own space | a sub-agent started into a space of its own shows there, not again under the agent that started it |
 | idle | projects with no spaces fold into a "No spaces" group at the bottom |
 | no name | an agent row with an icon and a session title shows only the title |
+| full title | hovering an agent or sub-agent row shows its whole session title (the row cuts it off) and the program |
 | no repo twice | a space inside a project doesn't repeat the repo name, only its branch |
 | general | a space in a home folder's `general/<task>` adds a "General" project for `~/general` (once; removing it keeps it removed). For task folders that aren't repos |
 | resume | after a reboot Herdr gives terminals a plain shell; a space with no agent whose shell is in a folder with Claude CLI conversations gets a "Resume Claude" row (`claude --continue`) |

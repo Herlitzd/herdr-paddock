@@ -42,8 +42,10 @@ export function agentRow(a, t, { inset = false, since = 0, now = Date.now() } = 
     .child(light(a.status, t))
     .when(Boolean(pic), (el) => el.child(pic))
     // Local patch (no name): with an icon and a session title, the icon names the program
-    // (in the tooltip too) and the title takes the name's place.
-    .when(Boolean(pic) && Boolean(s), (el) => el.tooltip(name)
+    // and the title takes the name's place.
+    // Local patch (full title): the tooltip has the whole session title, which the row cuts off.
+    .tooltip(s ? `${s}\n${name}` : name)
+    .when(Boolean(pic) && Boolean(s), (el) => el
       .child(div().min_w(0).flex_1().truncate().text_color(a.status === "idle" ? t.muted : t.foreground).child(s)))
     .when(!(pic && s), (el) => el.child(div().flex_none().max_w(110).truncate().text_color(a.status === "idle" ? t.muted : t.foreground).child(name))
       .when(Boolean(s), (el) => el.child(div().flex_none().text_color(t.dim).child("·"))
@@ -77,10 +79,12 @@ export function subRow(item, t, { inset = false, listed, parent, now = Date.now(
       .when(h.at > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - h.at))));
   }
   const { k } = item, pic = icon(k.program, 12, t.muted);
+  const kName = k.name || k.template || k.program?.name || k.address, ks = session(k);
   return subBox(`space-sub-${k.address}`, t, inset)
+    .tooltip(ks && ks !== kName ? `${kName}\n${ks}` : kName)
     .on_click((_e, cx) => { cx.stop_propagation(); run("terminal.peek", { terminal: k.address }); })
     .children(treeLines(lines, t))
     .child(div().mr(6).child(light(kidStatus(k, listed), t, 7)))
     .when(Boolean(pic), (el) => el.child(div().mr(6).child(pic)))
-    .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(k.name || k.template || k.program?.name || k.address));
+    .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(kName));
 }
