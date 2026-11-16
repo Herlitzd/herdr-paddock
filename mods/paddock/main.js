@@ -44,6 +44,7 @@ function place(s, ps) {
 const rowHeight = ({ tree }) => (tree ? 28 : 30);
 // Local patch (general): a home folder's general/<task> (Linux, macOS, root).
 const GENERAL = /^((?:\/home\/[^/]+|\/Users\/[^/]+|\/root)\/general)\/[^/]+/;
+const YELLOW = "#d4a72c"; // Local patch (brief): the brief row when something needs me
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
@@ -236,6 +237,32 @@ export default class Spaces extends View {
   // Local patch (walkthrough): the PR in the walkthrough mod, in its own tab ("Walk #n") in the
   // space, read on the space's machine. Clicking again goes back to that tab.
   // Only when that mod is installed.
+  // Local patch (brief): with a mod named "brief" installed, a row pinned above the list (it doesn't scroll)
+  // opens it. Its right side says what the brief found, from shared("brief.summary") = { date, text, hot },
+  // which the brief's side publishes; amber when something needs me.
+  briefRow(t, collapsed) {
+    if (!this.installed("brief")) return null;
+    const s = shared("brief.summary"), d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const fresh = s?.date === today, hot = fresh && s.hot;
+    return h_flex().id("brief-row").h(30).mx(8).mb(2).px(8).gap(8).flex_none().items_center().rounded(7).cursor_pointer()
+      .hover((st) => st.bg(t.hover)).tooltip("Morning brief")
+      .on_click(() => run("mod.open", { name: "brief" }))
+      .child(svg("mods/brief/sunrise.svg").size(14).flex_none().text_color(hot ? YELLOW : t.muted))
+      .when(!collapsed, (el) => el.child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child("Morning brief"))
+        .child(div().flex_none().text_size(11).text_color(hot ? YELLOW : t.dim).child(fresh ? s.text : "not written yet")));
+  }
+
+  // Whether a mod is installed (its mod.json is there), asked once per name.
+  installed(name) {
+    this.mods ??= {};
+    if (this.mods[name] === undefined) {
+      this.mods[name] = null;
+      readTextFile(`${appHome()}/mods/${name}/mod.json`).then((s) => { this.mods[name] = Boolean(s); }, () => { this.mods[name] = false; });
+    }
+    return this.mods[name];
+  }
+
   walkthrough() {
     if (this.hasWalk === undefined) {
       this.hasWalk = null;
@@ -973,6 +1000,7 @@ export default class Spaces extends View {
             .child(svg("mods/workspace-chrome/folder-plus.svg").size(14))))
           .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
             .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14)))))
+      .when(Boolean(this.briefRow(t, collapsed)), (el) => el.child(this.briefRow(t, collapsed)))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         // Released on the drop zone: out of its project. Anywhere else: nothing.
         .on_mouse_up("left", (_e, cx) => {
